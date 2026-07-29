@@ -1,7 +1,7 @@
 **English** | [中文](./README.md)
 
-[![GitHub stars](https://img.shields.io/github/stars/2930134478/AI-CS?style=social)](https://github.com/2930134478/AI-CS/stargazers)
-[![Forks](https://img.shields.io/github/forks/2930134478/AI-CS?style=social)](https://github.com/2930134478/AI-CS/fork)
+[![GitHub stars](https://img.shields.io/github/stars/Yedeng626/ai-cs?style=social)](https://github.com/Yedeng626/ai-cs/stargazers)
+[![Forks](https://img.shields.io/github/forks/Yedeng626/ai-cs?style=social)](https://github.com/Yedeng626/ai-cs/fork)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Go](https://img.shields.io/badge/Go-1.24+-00ADD8?logo=go&logoColor=white)](https://go.dev/)
 [![Next.js](https://img.shields.io/badge/Next.js-16-000000?logo=next.js&logoColor=white)](https://nextjs.org/)
@@ -9,7 +9,7 @@
 
 # AI-CS — Intelligent Customer Service
 
-> Open-source AI customer service: **AI + human agents**, self-hostable, configurable, observable.  
+> **v2** · Open-source AI customer service: **AI + human agents**, self-hostable, configurable, observable.  
 > Ship a **website chat widget** and an **agent dashboard** together.
 
 ## Table of Contents
@@ -54,9 +54,9 @@
 
 ## Live Demo
 
-- **Homepage**: [demo.cscorp.top](https://demo.cscorp.top)
-- **Visitor chat**: [demo.cscorp.top/chat](https://demo.cscorp.top/chat)
-- **Agent login**: [demo.cscorp.top/agent/login](https://demo.cscorp.top/agent/login)
+- **Homepage**: [demo.cscorp.top](http://www.yedeng.top)
+- **Visitor chat**: [demo.cscorp.top/chat](http://www.yedeng.top/chat)
+- **Agent login**: [demo.cscorp.top/agent/login](http://www.yedeng.top/agent/login)
 
 ## Features
 
@@ -112,7 +112,7 @@ Copy `.env.example` to `.env` and set at least: `MYSQL_ROOT_PASSWORD`, `DB_PASSW
 ### Option A — Pre-built images (recommended)
 
 ```bash
-git clone https://github.com/2930134478/AI-CS.git
+git clone https://github.com/Yedeng626/ai-cs.git
 cd AI-CS
 cp .env.example .env
 # edit .env, then:
@@ -176,11 +176,11 @@ Paste before `</body>`. Point iframe `src` to `https://your-domain/chat`. The pa
 
 ## Star History
 
-<a href="https://www.star-history.com/#2930134478/AI-CS&Date">
+<a href="https://www.star-history.com/#Yedeng626/ai-cs&Date">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=2930134478/AI-CS&type=Date&theme=dark" />
-    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=2930134478/AI-CS&type=Date" />
-    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=2930134478/AI-CS&type=Date" />
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=Yedeng626/ai-cs&type=Date&theme=dark" />
+    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=Yedeng626/ai-cs&type=Date" />
+    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=Yedeng626/ai-cs&type=Date" />
   </picture>
 </a>
 
@@ -188,14 +188,14 @@ Paste before `</body>`. Point iframe `src` to `https://your-domain/chat`. The pa
 
 ## Community
 
-- **Bugs / feature requests**：[GitHub Issues](https://github.com/2930134478/AI-CS/issues) (include deployment method and logs; never post API keys or DB passwords)
-- **QQ group**：1106804464. It appears in the [demo site footer](https://demo.cscorp.top) under Contact.
+- **Bugs / feature requests**：[GitHub Issues](https://github.com/Yedeng626/ai-cs/issues) (include deployment method and logs; never post API keys or DB passwords)
+- **QQ group**：1106804464. It appears in the [demo site footer](http://www.yedeng.top) under Contact.
 
 ## Friendly Links
 
-- [Live demo](https://demo.cscorp.top)
+- [Live demo](http://www.yedeng.top)
 - [ip2region](https://github.com/lionsoul2014/ip2region) — offline IP geolocation used by this project  
-- Suggest more links via [Issues](https://github.com/2930134478/AI-CS/issues)
+- Suggest more links via [Issues](https://github.com/Yedeng626/ai-cs/issues)
 
 ## Contributing
 

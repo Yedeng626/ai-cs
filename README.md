@@ -1,15 +1,18 @@
 [English](./README.en.md) | **中文**
 
-[![GitHub stars](https://img.shields.io/github/stars/2930134478/AI-CS?style=social)](https://github.com/2930134478/AI-CS/stargazers)
-[![Forks](https://img.shields.io/github/forks/2930134478/AI-CS?style=social)](https://github.com/2930134478/AI-CS/fork)
+[![GitHub stars](https://img.shields.io/github/stars/Yedeng626/ai-cs?style=social)](https://github.com/Yedeng626/ai-cs/stargazers)
+[![Forks](https://img.shields.io/github/forks/Yedeng626/ai-cs?style=social)](https://github.com/Yedeng626/ai-cs/fork)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![BGE](https://img.shields.io/badge/BGE--Small--ZH-v1.5-orange)](https://huggingface.co/BAAI/bge-small-zh-v1.5)
 [![Go](https://img.shields.io/badge/Go-1.24+-00ADD8?logo=go&logoColor=white)](https://go.dev/)
+[![DeepSeek](https://img.shields.io/badge/DeepSeek-V4-536DFE?logo=deepseek&logoColor=white)](https://deepseek.com)
 [![Next.js](https://img.shields.io/badge/Next.js-16-000000?logo=next.js&logoColor=white)](https://nextjs.org/)
+[![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)](https://docs.docker.com/compose/)
 [![MySQL](https://img.shields.io/badge/MySQL-8.0-4479A1?logo=mysql&logoColor=white)](https://www.mysql.com/)
 
 # AI-CS 智能客服系统
 
-> 开源的 AI 客服系统：**AI + 人工一体**、可私有化部署、可配置、可观测。  
+> **v2** · 开源的 AI 客服系统：**AI + 人工一体**、可私有化部署、可配置、可观测。  
 > 适合把「官网右下角客服小窗」与「客服工作台」一起落地的团队。
 
 ## 目录
@@ -58,9 +61,9 @@
 
 ## 在线演示
 
-- **官网首页（产品介绍 + SEO）**：[demo.cscorp.top](https://demo.cscorp.top)
-- **访客聊天页**：[demo.cscorp.top/chat](https://demo.cscorp.top/chat)（也可从首页右下角按钮进入）
-- **客服登录**：[demo.cscorp.top/agent/login](https://demo.cscorp.top/agent/login)
+- **官网首页（产品介绍 + SEO）**：[demo.cscorp.top](http://www.yedeng.top)
+- **访客聊天页**：[demo.cscorp.top/chat](http://www.yedeng.top/chat)（也可从首页右下角按钮进入）
+- **客服登录**：[demo.cscorp.top/agent/login](http://www.yedeng.top/agent/login)
 
 <a id="features"></a>
 
@@ -81,6 +84,9 @@
   - **提示词配置**（Prompt 管理）
   - **知识库管理 + RAG**（向量检索，可按需启用；向量库不可用时可不影响启动）
     - **PDF / DOCX 导入**、**文档分段（Chunk）** 与逐段向量化
+    - **v2 本地 BGE 嵌入**：可选本地 BGE 模型（embedding-svc），无需外部 Embedding API
+    - **DeepSeek 深度集成**：支持 DeepSeek API 一键配置
+    - **多租户路由**：支持按域名自动分配不同知识库与 AI 配置
     - **FAQ 优先**：命中 FAQ 直接返回答案；聊天输入 `/` 快捷搜索 FAQ
     - 知识库测试窗口（内部会话），回复可标记 `sources_used`（知识库 / 大模型 / 联网）
   - **离线邮件通知**：访客离线且已留邮箱时，客服发人工消息后延迟 SMTP 推送（设置页可配，访客上线自动取消、同会话合并）
@@ -110,15 +116,19 @@ AI-CS/
 │   ├── data/                   # ip2region xdb（可选，见 data/README.md）
 │   └── main.go
 ├── frontend/                   # Next.js：官网、访客小窗、客服工作台
+├── embedding-svc/             # 本地嵌入模型服务 (BGE)
+│   ├── Dockerfile
+│   └── serve.py
+├── assets/                    # README 截图与测试资源
 │   ├── app/                    # 页面路由（/、/chat、/agent/*）
 │   ├── components/             # UI 组件
 │   ├── features/               # 按领域划分的 API / hooks
 │   └── public/widget.js        # 可嵌入站点的脚本小窗
 ├── doc/                        # 项目文档与 CHANGELOG
 ├── scripts/                    # 辅助脚本（如下载 ip2region xdb）
-├── assets/readme/              # README 截图资源
 ├── docker-compose.yml          # 本地构建部署
 ├── docker-compose.prod.yml     # 预构建镜像部署
+├── docker-compose.mini.yml      # 精简部署（无 Milvus）
 ├── docker-compose.milvus.yml     # Milvus 相关（按需）
 └── .env.example                # 环境变量模板（复制为 .env）
 ```
@@ -135,7 +145,7 @@ AI-CS/
 #### 1）准备配置
 
 ```bash
-git clone https://github.com/2930134478/AI-CS.git
+git clone https://github.com/Yedeng626/ai-cs.git
 cd AI-CS
 cp .env.example .env
 ```
@@ -191,7 +201,7 @@ docker-compose -f docker-compose.prod.yml up -d
 ### 方式 B：Docker 本地构建部署（可自定义）
 
 ```bash
-git clone https://github.com/2930134478/AI-CS.git
+git clone https://github.com/Yedeng626/ai-cs.git
 cd AI-CS
 cp .env.example .env
 docker-compose up -d --build
@@ -206,7 +216,7 @@ docker-compose up -d --build
 - MySQL 8.0+
 
 ```bash
-git clone https://github.com/2930134478/AI-CS.git
+git clone https://github.com/Yedeng626/ai-cs.git
 cd AI-CS
 cp .env.example .env
 
@@ -272,8 +282,8 @@ npm run dev
 | `NEXT_PUBLIC_BACKEND_HOST` | 前端 dev 代理目标 host | 否 | `localhost` | `127.0.0.1` |
 | `NEXT_PUBLIC_BACKEND_PORT` | 前端 dev 代理目标 port | 否 | `8080` | `18080` |
 | `NEXT_PUBLIC_MATOMO_CONTAINER_URL` | Matomo 脚本地址 | 可选 | 空 | `https://.../container.js` |
-| `BACKEND_IMAGE` | 预构建后端镜像（prod compose） | 是（prod） | `537yaha/ai-cs-backend:latest` | `your/backend:tag` |
-| `FRONTEND_IMAGE` | 预构建前端镜像（prod compose） | 是（prod） | `537yaha/ai-cs-frontend:latest` | `your/frontend:tag` |
+| `BACKEND_IMAGE` | 预构建后端镜像（prod compose） | 是（prod） | `yedeng/ai-cs-backend:latest` | `your/backend:tag` |
+| `FRONTEND_IMAGE` | 预构建前端镜像（prod compose） | 是（prod） | `yedeng/ai-cs-frontend:latest` | `your/frontend:tag` |
 
 <a id="rag"></a>
 
@@ -365,11 +375,11 @@ npm run dev
 
 ## Star History
 
-<a href="https://www.star-history.com/#2930134478/AI-CS&Date">
+<a href="https://www.star-history.com/#Yedeng626/ai-cs&Date">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=2930134478/AI-CS&type=Date&theme=dark" />
-    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=2930134478/AI-CS&type=Date" />
-    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=2930134478/AI-CS&type=Date" />
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=Yedeng626/ai-cs&type=Date&theme=dark" />
+    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=Yedeng626/ai-cs&type=Date" />
+    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=Yedeng626/ai-cs&type=Date" />
   </picture>
 </a>
 
@@ -377,20 +387,20 @@ npm run dev
 
 ## 交流与反馈
 
-- **Bug / 功能建议**：[GitHub Issues](https://github.com/2930134478/AI-CS/issues)（请附部署方式、后端日志；勿贴 API Key、数据库密码）
-- **QQ 交流群**：1106804464，[官网 / Demo 页脚](https://demo.cscorp.top)「联系我们」会同步展示
+- **Bug / 功能建议**：[GitHub Issues](https://github.com/Yedeng626/ai-cs/issues)（请附部署方式、后端日志；勿贴 API Key、数据库密码）
+- **QQ 交流群**：1106804464，[官网 / Demo 页脚](http://www.yedeng.top)「联系我们」会同步展示
 
 ## Friendly Links
 
-- [在线演示 · AI-CS Demo](https://demo.cscorp.top)
+- [在线演示 · AI-CS Demo](http://www.yedeng.top)
 - [ip2region · 离线 IP 地理位置库](https://github.com/lionsoul2014/ip2region)（本项目访客地域解析）
-- 欢迎通过 [Issue](https://github.com/2930134478/AI-CS/issues) 推荐友链，维护者审核后加入本节
+- 欢迎通过 [Issue](https://github.com/Yedeng626/ai-cs/issues) 推荐友链，维护者审核后加入本节
 
 <a id="contributing"></a>
 
 ## 贡献
 
-欢迎提交 [Issue](https://github.com/2930134478/AI-CS/issues) 和 Pull Request。报 Bug 请附上部署方式、后端日志与 `.env` 关键项（密码打码）。
+欢迎提交 [Issue](https://github.com/Yedeng626/ai-cs/issues) 和 Pull Request。报 Bug 请附上部署方式、后端日志与 `.env` 关键项（密码打码）。
 
 <a id="license"></a>
 
