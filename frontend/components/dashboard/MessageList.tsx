@@ -1,0 +1,721 @@
+"use client";
+
+import { useCallback, useEffect, useRef, useState } from "react";
+import { MessageItem } from "@/features/agent/types";
+import { formatMessageTime } from "@/utils/format";
+import { highlightText } from "@/utils/highlight";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { Paperclip, Download, X } from "lucide-react";
+import { API_BASE_URL } from "@/lib/config";
+import { getAvatarUrl } from "@/utils/avatar";
+import { useI18n } from "@/lib/i18n/provider";
+
+function TypewriterText({
+  text,
+  animateKey,
+  speedMs = 18,
+}: {
+  text: string;
+  animateKey: number | string;
+  speedMs?: number;
+}) {
+  const [shown, setShown] = useState("");
+
+  useEffect(() => {
+    setShown("");
+  }, [animateKey, text]);
+
+  useEffect(() => {
+    if (!text) return;
+
+    const len = text.length;
+    // 性能优先：很长的文本不可能真的每 1 个字符 setState 一次
+    // 但短文本保持更细粒度，让你看到“逐字打出”的效果。
+    const chunkSize = len < 250 ? 1 : len < 800 ? 2 : 4;
+
+    let idx = 0;
+    const timer = window.setInterval(() => {
+      idx = Math.min(len, idx + chunkSize);
+      setShown(text.slice(0, idx));
+      if (idx >= len) {
+        window.clearInterval(timer);
+      }
+    }, speedMs);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [text, animateKey, speedMs]);
+
+  return <>{shown}</>;
+}
+
+interface MessageListProps {
+  messages: MessageItem[];
+  loading: boolean;
+  highlightKeyword: string;
+  onHighlightClear: () => void;
+  currentUserIsAgent?: boolean;
+  disableAutoScroll?: boolean;
+  conversationId?: number | null;
+  onMarkMessagesRead?: (conversationId: number, readerIsAgent: boolean) => void;
+  /** 底部插槽（如 AI 正在输入提示），会渲染在消息列表最下方并参与滚动 */
+  bottomSlot?: React.ReactNode;
+  /** 知识库测试（内部对话）模式：AI 回复（sender_id=0）显示在左侧，客服消息显示在右侧 */
+  internalChatMode?: boolean;
+  /** 访客侧左侧消息头像（key 为 sender_id） */
+  leftAvatarBySenderId?: Record<number, string | null | undefined>;
+}
+
+export function MessageList({
+  messages,
+  loading,
+  highlightKeyword,
+  onHighlightClear,
+  currentUserIsAgent = true,
+  disableAutoScroll = false,
+  conversationId = null,
+  onMarkMessagesRead,
+  bottomSlot,
+  internalChatMode = false,
+  leftAvatarBySenderId,
+}: MessageListProps) {
+  const { t } = useI18n();
+  const containerRef = useRef<HTMLDivElement>(null);
+  const messageRefs = useRef<Record<number, HTMLDivElement | null>>({});
+  const shouldStickToBottomRef = useRef(true);
+  const lastConversationIdRef = useRef<number | null>(null);
+  const markReadTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const lastMarkedReadRef = useRef<number>(0);
+  const lastMessageIdRef = useRef<number | null>(null);
+  const lastMessageCountRef = useRef<number>(0);
+  const hasInitialScrolledRef = useRef(false); // 标记是否已经完成初始滚动
+  /** 逐字打字效果：避免历史消息在重进会话/重开小窗时重复播放 */
+  const typewriterInitializedRef = useRef(false);
+  const typewriterSeenIdsRef = useRef<Set<number>>(new Set());
+  // 图片预览状态（必须在所有条件返回之前声明）
+  const [imagePreviewOpen, setImagePreviewOpen] = useState(false);
+  const [previewImageUrl, setPreviewImageUrl] = useState<string | null>(null);
+
+  const typewriterStorageKey =
+    conversationId != null ? `ai_cs_typewriter_seen_ai_${conversationId}` : null;
+
+  const loadTypewriterSeenSet = useCallback(() => {
+    if (typeof window === "undefined" || !typewriterStorageKey) {
+      typewriterSeenIdsRef.current = new Set();
+      return;
+    }
+    try {
+      const raw = window.sessionStorage.getItem(typewriterStorageKey);
+      if (!raw) {
+        typewriterSeenIdsRef.current = new Set();
+        return;
+      }
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) {
+        typewriterSeenIdsRef.current = new Set();
+        return;
+      }
+      typewriterSeenIdsRef.current = new Set(
+        parsed.map((n) => Number(n)).filter((n) => Number.isFinite(n))
+      );
+    } catch {
+      typewriterSeenIdsRef.current = new Set();
+    }
+  }, [typewriterStorageKey]);
+
+  const persistTypewriterSeenSet = useCallback(() => {
+    if (typeof window === "undefined" || !typewriterStorageKey) return;
+    try {
+      const ids = Array.from(typewriterSeenIdsRef.current);
+      const sliced = ids.length > 600 ? ids.slice(ids.length - 600) : ids;
+      window.sessionStorage.setItem(typewriterStorageKey, JSON.stringify(sliced));
+    } catch {
+      // ignore
+    }
+  }, [typewriterStorageKey]);
+
+  const markTypewriterSeen = useCallback(
+    (messageId: number) => {
+      if (!Number.isFinite(messageId)) return;
+      if (typewriterSeenIdsRef.current.has(messageId)) return;
+      typewriterSeenIdsRef.current.add(messageId);
+      persistTypewriterSeenSet();
+    },
+    [persistTypewriterSeenSet]
+  );
+
+  useEffect(() => {
+    if (conversationId !== lastConversationIdRef.current) {
+      lastConversationIdRef.current = conversationId;
+      shouldStickToBottomRef.current = true;
+      lastMessageIdRef.current = null;
+      lastMessageCountRef.current = 0;
+      hasInitialScrolledRef.current = false; // 重置初始滚动标记
+      typewriterInitializedRef.current = false;
+      loadTypewriterSeenSet();
+    }
+  }, [conversationId]);
+
+  // 首次加载某个会话的历史消息：全部视作“已展示过打字”，避免重复播放
+  useEffect(() => {
+    if (typewriterInitializedRef.current) return;
+    if (!messages || messages.length === 0) return;
+    // 确保已载入 storage
+    if (typewriterSeenIdsRef.current.size === 0) {
+      loadTypewriterSeenSet();
+    }
+    for (const msg of messages) {
+      const isAIMessage = Boolean(msg.sender_is_agent) && msg.sender_id === 0;
+      if (isAIMessage) {
+        markTypewriterSeen(msg.id);
+      }
+    }
+    typewriterInitializedRef.current = true;
+  }, [messages, loadTypewriterSeenSet, markTypewriterSeen]);
+
+  // 监听滚动事件，当滚动到底部附近时标记消息为已读
+  // 注意：即使 disableAutoScroll 为 true，也应该允许通过滚动来标记消息为已读
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container || !conversationId || !onMarkMessagesRead) {
+      return;
+    }
+
+    const handleScroll = () => {
+      const { scrollTop, scrollHeight, clientHeight } = container;
+      const distanceToBottom = scrollHeight - scrollTop - clientHeight;
+      const isNearBottom = distanceToBottom < 100;
+      shouldStickToBottomRef.current = isNearBottom;
+
+      // 当滚动到底部附近时，检查是否有未读消息需要标记为已读
+      if (isNearBottom) {
+        // 防抖：延迟 500ms 后标记为已读，避免频繁调用
+        if (markReadTimerRef.current) {
+          clearTimeout(markReadTimerRef.current);
+        }
+        markReadTimerRef.current = setTimeout(() => {
+          // 检查是否有未读的消息（对方发送的消息）
+          const unreadMessages = messages.filter((msg) => {
+            const isFromOther = internalChatMode
+              ? msg.sender_is_agent && msg.sender_id === 0 // 内部对话：AI 回复视为对方
+              : currentUserIsAgent
+                ? !msg.sender_is_agent
+                : msg.sender_is_agent;
+            return isFromOther && !msg.is_read;
+          });
+
+          if (unreadMessages.length > 0) {
+            // 避免频繁调用：如果距离上次标记不到 2 秒，则跳过
+            const now = Date.now();
+            if (now - lastMarkedReadRef.current < 2000) {
+              return;
+            }
+            // 标记为已读
+            onMarkMessagesRead(conversationId, currentUserIsAgent);
+            lastMarkedReadRef.current = now;
+          }
+        }, 500);
+      }
+    };
+
+    handleScroll();
+    container.addEventListener("scroll", handleScroll);
+    return () => {
+      container.removeEventListener("scroll", handleScroll);
+      if (markReadTimerRef.current) {
+        clearTimeout(markReadTimerRef.current);
+      }
+    };
+  }, [conversationId, onMarkMessagesRead, messages, currentUserIsAgent, internalChatMode]);
+
+  useEffect(() => {
+    if (messages.length === 0) {
+      return;
+    }
+
+    const container = containerRef.current;
+    if (!container) {
+      return;
+    }
+
+    const keyword = highlightKeyword.trim();
+    const lastMessage = messages[messages.length - 1];
+    const isLastMessageFromCurrentUser = lastMessage
+      ? currentUserIsAgent
+        ? lastMessage.sender_is_agent
+        : !lastMessage.sender_is_agent
+      : false;
+
+    // 检查是否有新消息（通过比较消息ID或消息数量）
+    const hasNewMessage =
+      lastMessage.id !== lastMessageIdRef.current ||
+      messages.length !== lastMessageCountRef.current;
+
+    // 更新记录
+    lastMessageIdRef.current = lastMessage.id;
+    lastMessageCountRef.current = messages.length;
+
+    // 使用 requestAnimationFrame 确保 DOM 已更新后再检查位置
+    requestAnimationFrame(() => {
+      // 重新获取容器引用，确保使用最新的 DOM 元素
+      const currentContainer = containerRef.current;
+      if (!currentContainer) {
+        return;
+      }
+
+      // 对于新消息，需要延迟一点再检查位置，确保 DOM 完全更新（特别是图片/文件消息）
+      // 使用双重 requestAnimationFrame + 小延迟，给图片加载留出时间
+      const checkAndScroll = () => {
+        const container = containerRef.current;
+        if (!container) {
+          return;
+        }
+
+        // 在 DOM 更新后检查当前位置
+        const { scrollTop, scrollHeight, clientHeight } = container;
+        const distanceToBottom = scrollHeight - scrollTop - clientHeight;
+        const isNearBottom = distanceToBottom < 100;
+        // 更新 shouldStickToBottomRef，确保使用最新的位置信息
+        shouldStickToBottomRef.current = isNearBottom;
+
+        // 检查是否是初始加载（首次加载消息或切换对话后首次加载）
+        const isInitialLoad = !hasInitialScrolledRef.current && messages.length > 0;
+
+        // 滚动逻辑：
+        // 1. 如果是初始加载（首次加载消息或切换对话），无论什么情况都自动滚动到底部
+        // 2. 如果最后一条消息是自己发送的，无论在哪里都自动滚动到底部（即使 disableAutoScroll 为 true）
+        // 3. 如果最后一条消息是对方发送的：
+        //    - 如果用户在底部附近（isNearBottom），无论 disableAutoScroll 是什么值，都自动滚动到底部（保持"粘到底部"的行为）
+        //    - 如果用户不在底部附近，且 disableAutoScroll 为 true，不自动滚动（用于查看历史消息时不被新消息打断）
+        //    - 如果用户不在底部附近，且 disableAutoScroll 为 false，不自动滚动（与上面的行为一致）
+        // 4. 如果没有新消息（例如只是消息状态更新），不改变滚动位置
+        // 这样确保访客端和客服端的行为一致：初始加载时显示最新消息，当用户在底部附近时，收到新消息会自动滚动到底部
+        const shouldAutoScroll =
+          isInitialLoad ||
+          (hasNewMessage &&
+            (isLastMessageFromCurrentUser ||
+              isNearBottom ||
+              (!currentUserIsAgent && !isLastMessageFromCurrentUser)));
+
+        if (keyword) {
+          const keywordLower = keyword.toLowerCase();
+          const matchingMessage = messages.find((message) =>
+            message.content.toLowerCase().includes(keywordLower)
+          );
+
+          if (matchingMessage) {
+            const scroll = () => {
+              const target = messageRefs.current[matchingMessage.id];
+              if (target) {
+                target.scrollIntoView({
+                  behavior: "smooth",
+                  block: "center",
+                  inline: "nearest",
+                });
+              }
+              setTimeout(onHighlightClear, 3000);
+            };
+
+            setTimeout(scroll, 200);
+          } else {
+            if (!shouldAutoScroll) {
+              return;
+            }
+          const scrollBottom = () => {
+            const container = containerRef.current;
+            if (!container) {
+              return;
+            }
+            container.scrollTo({
+              top: container.scrollHeight,
+              behavior: isInitialLoad ? "auto" : "smooth", // 初始加载时使用 instant，避免动画
+            });
+            // 标记初始滚动已完成
+            if (isInitialLoad) {
+              hasInitialScrolledRef.current = true;
+            }
+          };
+          setTimeout(scrollBottom, isInitialLoad ? 0 : 100); // 初始加载时立即滚动
+          onHighlightClear();
+          }
+        } else {
+          if (!shouldAutoScroll) {
+            return;
+          }
+          const scrollBottom = () => {
+            const container = containerRef.current;
+            if (!container) {
+              return;
+            }
+            if (container.scrollHeight === container.clientHeight && container.parentElement) {
+              const parent = container.parentElement;
+              const parentHeight = parent.offsetHeight;
+              container.style.height = `${parentHeight}px`;
+              container.style.maxHeight = `${parentHeight}px`;
+            }
+            // 访客端收到对方（如 AI）的新消息时：从该气泡头部开始显示，长消息无需往上翻
+            const lastMsgEl = messageRefs.current[lastMessage.id];
+            if (
+              lastMsgEl &&
+              !currentUserIsAgent &&
+              !isLastMessageFromCurrentUser
+            ) {
+              lastMsgEl.scrollIntoView({
+                block: "start",
+                behavior: isInitialLoad ? "auto" : "smooth",
+                inline: "nearest",
+              });
+            } else {
+              container.scrollTo({
+                top: container.scrollHeight,
+                behavior: isInitialLoad ? "auto" : "smooth",
+              });
+            }
+            if (isInitialLoad) {
+              hasInitialScrolledRef.current = true;
+            }
+          };
+          setTimeout(scrollBottom, isInitialLoad ? 0 : 100);
+        }
+
+        // 当消息列表更新且自动滚动到底部时，检查是否需要标记为已读
+        // 或者如果用户已经在底部附近，也应该标记为已读（即使没有自动滚动）
+        if (conversationId && onMarkMessagesRead && messages.length > 0) {
+          // 延迟标记为已读，确保滚动动画完成
+          if (markReadTimerRef.current) {
+            clearTimeout(markReadTimerRef.current);
+          }
+          markReadTimerRef.current = setTimeout(() => {
+            // 如果自动滚动到底部，或者用户已经在底部附近，都标记为已读
+            const shouldMarkRead = shouldAutoScroll || isNearBottom;
+            if (!shouldMarkRead) {
+              return;
+            }
+
+            const unreadMessages = messages.filter((msg) => {
+              const isFromOther = internalChatMode
+                ? msg.sender_is_agent && msg.sender_id === 0
+                : currentUserIsAgent
+                  ? !msg.sender_is_agent
+                  : msg.sender_is_agent;
+              return isFromOther && !msg.is_read;
+            });
+
+            if (unreadMessages.length > 0) {
+              // 避免频繁调用：如果距离上次标记不到 2 秒，则跳过
+              const now = Date.now();
+              if (now - lastMarkedReadRef.current < 2000) {
+                return;
+              }
+              onMarkMessagesRead(conversationId, currentUserIsAgent);
+              lastMarkedReadRef.current = now;
+            }
+          }, shouldAutoScroll ? 800 : 300); // 如果自动滚动，等待 800ms；否则等待 300ms
+        }
+      };
+
+      // 对于新消息，延迟一点再检查位置，确保 DOM 完全更新（特别是图片/文件消息）
+      if (hasNewMessage) {
+        // 检查最后一条消息是否包含图片/文件
+        const lastMessageHasFile = lastMessage.file_url;
+        
+        if (lastMessageHasFile) {
+          // 如果包含文件，延迟更长时间，确保图片加载完成
+          requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+              setTimeout(() => {
+                checkAndScroll();
+              }, 200); // 给图片加载留出更多时间
+            });
+          });
+        } else {
+          // 普通消息，正常延迟
+          requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+              checkAndScroll();
+            });
+          });
+        }
+      } else {
+        // 非新消息（如状态更新），直接检查
+        checkAndScroll();
+      }
+    });
+  }, [
+    messages,
+    highlightKeyword,
+    onHighlightClear,
+    disableAutoScroll,
+    currentUserIsAgent,
+    conversationId,
+    onMarkMessagesRead,
+    internalChatMode,
+  ]);
+
+  if (loading) {
+    return (
+      <div className="flex-1 flex items-center justify-center bg-muted/30">
+        <span className="text-sm text-muted-foreground">消息加载中...</span>
+      </div>
+    );
+  }
+
+  if (messages.length === 0) {
+    return (
+      <div ref={containerRef} className="flex-1 min-h-0 overflow-y-auto p-3 bg-muted/20 scrollbar-auto">
+        <div className="text-center text-muted-foreground mt-8 text-sm">暂无消息</div>
+        {bottomSlot ? <div className="mt-4">{bottomSlot}</div> : null}
+      </div>
+    );
+  }
+
+  return (
+    <>
+      {/* 图片预览对话框 */}
+      <Dialog open={imagePreviewOpen} onOpenChange={setImagePreviewOpen}>
+        <DialogContent className="max-w-4xl max-h-[90vh] p-0">
+          {previewImageUrl && (
+            <div className="relative">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="absolute top-2 right-2 z-10"
+                onClick={() => setImagePreviewOpen(false)}
+              >
+                <X className="w-4 h-4" />
+              </Button>
+              <img
+                src={previewImageUrl}
+                alt="预览"
+                className="w-full h-auto max-h-[90vh] object-contain"
+              />
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      <div
+        ref={containerRef}
+        className="h-full w-full overflow-y-auto p-3 bg-muted/20 scrollbar-auto"
+        style={{ height: '100%' }}
+      >
+        <div className="space-y-3.5">
+          {messages.map((message) => {
+          const keyword = highlightKeyword.trim();
+          const isMatching =
+            keyword !== "" &&
+            message.content.toLowerCase().includes(keyword.toLowerCase());
+          const bubbleContent =
+            keyword !== "" && isMatching
+              ? highlightText(message.content, keyword)
+              : message.content;
+
+          const isAIMessage = Boolean(message.sender_is_agent) && message.sender_id === 0;
+          const hasShownTypewriter = typewriterSeenIdsRef.current.has(message.id);
+          // 仅当不需要高亮搜索关键词、且该消息为 AI 回复、且从未展示过打字效果时才启用逐字显示
+          const shouldTypewriter =
+            isAIMessage &&
+            !hasShownTypewriter &&
+            keyword === "" &&
+            !message.file_url &&
+            typeof message.content === "string" &&
+            message.content.length > 0;
+
+          if (message.message_type === "system_message") {
+            return (
+              <div
+                key={message.id}
+                ref={(element) => {
+                  messageRefs.current[message.id] = element;
+                }}
+                className="text-center text-xs text-muted-foreground/90"
+              >
+                <Badge variant="secondary" className="inline-block border border-border/40 bg-background/70 text-muted-foreground">
+                  {message.content}
+                </Badge>
+              </div>
+            );
+          }
+
+          const isSenderAgent = Boolean(message.sender_is_agent);
+          // 内部对话（知识库测试）：AI 回复 sender_id=0 显示左侧，客服消息显示右侧
+          const isCurrentUser = internalChatMode
+            ? isSenderAgent && message.sender_id !== 0
+            : currentUserIsAgent
+              ? isSenderAgent
+              : !isSenderAgent;
+          const alignment = isCurrentUser ? "justify-end" : "justify-start";
+          const bubbleColor = isCurrentUser
+            ? "bg-primary text-primary-foreground shadow-sm ring-1 ring-primary/20"
+            : "bg-background/95 text-card-foreground border border-border/45 shadow-[0_1px_4px_rgba(15,23,42,0.06)]";
+          // 拉开双方气泡圆角差异：自己消息更利落、对方消息更柔和，便于快速分辨
+          const cornerClass = isCurrentUser
+            ? "rounded-[18px] rounded-br-md"
+            : "rounded-[18px] rounded-bl-md";
+          // 计算已读回执的样式类名
+          // 统一使用相同的样式：蓝色半透明（text-primary/70）
+          // 因为访客端和客服端的当前用户消息都是蓝色背景（bg-primary），所以使用相同的样式
+          const receiptClass = isCurrentUser ? "text-primary/70" : "";
+
+          // 文件相关
+          const hasFile = Boolean(message.file_url);
+          const isImage = message.file_type === "image";
+          const isDocument = message.file_type === "document";
+
+          // 获取文件URL（完整URL）
+          const getFileUrl = (fileUrl: string | null | undefined): string => {
+            if (!fileUrl) return "";
+            if (fileUrl.startsWith("http")) return fileUrl;
+            return `${API_BASE_URL}${fileUrl}`;
+          };
+
+          // 格式化文件大小
+          const formatFileSize = (bytes: number | null | undefined): string => {
+            if (!bytes) return "";
+            if (bytes < 1024) return bytes + " B";
+            if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB";
+            return (bytes / (1024 * 1024)).toFixed(1) + " MB";
+          };
+
+          // 打开图片预览
+          const handleImageClick = (url: string) => {
+            setPreviewImageUrl(url);
+            setImagePreviewOpen(true);
+          };
+
+          // 下载文件
+          const handleDownload = (url: string, fileName: string | null | undefined) => {
+            const link = document.createElement("a");
+            link.href = url;
+            link.download = fileName || "file";
+            link.target = "_blank";
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+          };
+
+          const leftAvatarUrl = !isCurrentUser ? getAvatarUrl(leftAvatarBySenderId?.[message.sender_id]) : null;
+          const showLeftAvatar = !isCurrentUser && Boolean(leftAvatarBySenderId);
+
+          return (
+            <div
+              key={message.id}
+              ref={(element) => {
+                messageRefs.current[message.id] = element;
+              }}
+              className={`flex ${alignment} items-end gap-2`}
+            >
+              {showLeftAvatar ? (
+                <div className="w-7 h-7 rounded-full overflow-hidden bg-slate-200 border border-slate-300 flex-shrink-0">
+                  {leftAvatarUrl ? (
+                    <img src={leftAvatarUrl} alt="客服头像" className="w-full h-full object-cover" />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center text-[10px] text-slate-600">客</div>
+                  )}
+                </div>
+              ) : null}
+              <div className="max-w-[72%]">
+                <div
+                  className={`px-3.5 py-2.5 rounded-2xl ${
+                    cornerClass
+                  } ${bubbleColor} transition-shadow hover:shadow-sm`}
+                >
+                  {/* 文本内容 */}
+                  {message.content && (
+                    <div className="whitespace-pre-wrap break-words text-sm">
+                      {shouldTypewriter ? (
+                        (() => {
+                          // 标记为已展示，避免重新进入会话/重开小窗时重复打字
+                          markTypewriterSeen(message.id);
+                          return (
+                            <TypewriterText text={message.content} animateKey={message.id} />
+                          );
+                        })()
+                      ) : (
+                        bubbleContent
+                      )}
+                    </div>
+                  )}
+                  
+                  {/* 文件显示 */}
+                  {hasFile && message.file_url && (
+                    <div className={message.content ? "mt-2" : ""}>
+                      {isImage ? (
+                        // 图片预览
+                        <div
+                          className="cursor-pointer rounded-lg overflow-hidden max-w-[300px] border border-border/30 hover:border-primary/50 transition-colors shadow-sm"
+                          onClick={() => handleImageClick(getFileUrl(message.file_url))}
+                        >
+                          <img
+                            src={getFileUrl(message.file_url)}
+                            alt={message.file_name || "图片"}
+                            className="max-w-full h-auto"
+                            loading="lazy"
+                          />
+                        </div>
+                      ) : isDocument ? (
+                        // 文档显示
+                        <div className="flex items-center gap-2 p-3 bg-background/60 rounded-lg border border-border/30 hover:bg-background/80 transition-colors">
+                          <Paperclip className="w-4 h-4 flex-shrink-0" />
+                          <div className="flex-1 min-w-0">
+                            <div className="text-sm font-medium truncate">
+                              {message.file_name || "文件"}
+                            </div>
+                            {message.file_size && (
+                              <div className="text-xs text-muted-foreground">
+                                {formatFileSize(message.file_size)}
+                              </div>
+                            )}
+                          </div>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() =>
+                              handleDownload(
+                                getFileUrl(message.file_url),
+                                message.file_name
+                              )
+                            }
+                            className="flex-shrink-0"
+                          >
+                            <Download className="w-4 h-4" />
+                          </Button>
+                        </div>
+                      ) : null}
+                    </div>
+                  )}
+                </div>
+                <div className="flex items-center gap-1 mt-1.5 px-0.5 text-[10px] text-muted-foreground/80">
+                  {isCurrentUser && (
+                    <span className={receiptClass}>
+                      {message.is_read ? "✓✓" : "✓"}
+                    </span>
+                  )}
+                  <span>{formatMessageTime(message.created_at)}</span>
+                </div>
+                {/* AI 回复的数据源标记（仅对方消息且存在 sources_used 时显示） */}
+                {!isCurrentUser && message.sources_used && (
+                  <div className="mt-1 text-[10px] text-muted-foreground flex flex-wrap gap-x-2 gap-y-0">
+                    {message.sources_used.split(",").map((s) => s.trim()).filter(Boolean).map((src) => (
+                      <span key={src}>
+                        {src === "knowledge_base" && t("agent.aiSource.kb")}
+                        {src === "llm" && t("agent.aiSource.llm")}
+                        {src === "web" && t("agent.aiSource.web")}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })}
+        </div>
+        {bottomSlot}
+      </div>
+    </>
+  );
+}
+

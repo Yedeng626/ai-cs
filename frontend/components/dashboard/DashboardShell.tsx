@@ -1,0 +1,505 @@
+"use client";
+
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+
+import { useAuth } from "@/features/agent/hooks/useAuth";
+import { useConversations } from "@/features/agent/hooks/useConversations";
+import { useMessages } from "@/features/agent/hooks/useMessages";
+import {
+  initInternalConversation,
+  closeConversation,
+  fetchConversations,
+} from "@/features/agent/services/conversationApi";
+import { toast } from "@/hooks/useToast";
+import { useProfile } from "@/features/agent/hooks/useProfile";
+import { Profile } from "@/features/agent/types";
+import { ResponsiveLayout } from "@/components/layout";
+import { LAYOUT } from "@/lib/constants/breakpoints";
+import {
+  getPageFromSearchParams,
+  getAgentPage,
+} from "@/lib/constants/agent-pages";
+import { Loader2 } from "lucide-react";
+import { ChatHeader } from "./ChatHeader";
+import { ConversationSidebar } from "./ConversationSidebar";
+import { MessageInput } from "./MessageInput";
+import { MessageList } from "./MessageList";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
+import { NavigationSidebar, type NavigationPage } from "./NavigationSidebar";
+import { ProfileModal } from "./ProfileModal";
+import { VisitorDetailPanel } from "./VisitorDetailPanel";
+import { useSoundNotification } from "@/hooks/useSoundNotification";
+import { usePageTitle } from "@/hooks/usePageTitle";
+import { reportFrontendLog } from "@/features/agent/services/systemLogApi";
+import { useI18n } from "@/lib/i18n/provider";
+
+export function DashboardShell() {
+  const { t } = useI18n();
+  const pathname = usePathname();
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const currentPage = getPageFromSearchParams(searchParams);
+
+  // 登录状态：负责从本地存储读取客服信息，并提供登出方法
+  const { agent, loading: authLoading, logout } = useAuth();
+
+  // 前端全局错误上报（最小可用：window error + promise rejection）
+  useEffect(() => {
+    const onError = (ev: ErrorEvent) => {
+      void reportFrontendLog({
+        level: "error",
+        category: "frontend",
+        event: "window_error",
+        message: ev.message || "window error",
+        meta: {
+          filename: ev.filename,
+          lineno: ev.lineno,
+          colno: ev.colno,
+        },
+      });
+    };
+    const onRejection = (ev: PromiseRejectionEvent) => {
+      const reason = String(ev.reason ?? "unhandled rejection");
+      void reportFrontendLog({
+        level: "error",
+        category: "frontend",
+        event: "unhandled_rejection",
+        message: reason.slice(0, 500),
+      });
+    };
+    window.addEventListener("error", onError);
+    window.addEventListener("unhandledrejection", onRejection);
+    return () => {
+      window.removeEventListener("error", onError);
+      window.removeEventListener("unhandledrejection", onRejection);
+    };
+  }, []);
+
+  // 个人资料状态
+  const [profileModalOpen, setProfileModalOpen] = useState(false);
+  const {
+    profile,
+    loading: profileLoading,
+    refresh: refreshProfile,
+    update: updateProfile,
+    upload: uploadAvatar,
+  } = useProfile({
+    userId: agent?.id ?? null,
+    enabled: Boolean(agent?.id),
+  });
+
+  // 会话过滤状态
+  const [conversationFilter, setConversationFilter] = useState<"all" | "mine" | "others">("all");
+  const [conversationStatus, setConversationStatus] = useState<"open" | "closed">("open");
+
+  // 声音通知开关（客服端）
+  const { enabled: soundEnabled, toggle: toggleSound } = useSoundNotification(false);
+
+  const currentPageMeta = getAgentPage(currentPage);
+  const isInternalChat = currentPage === "internal-chat";
+  const isChatPage = currentPageMeta?.isChatPage ?? false;
+  // 会话状态：访客对话或内部对话（知识库测试）根据 currentPage 切换
+  const {
+    conversations,
+    filteredConversations,
+    selectedConversationId,
+    searchQuery,
+    loading,
+    loadingMore,
+    isInitialLoad,
+    hasMore,
+    totalUnread,
+    setSearchQuery,
+    selectConversation,
+    updateConversation,
+    refresh: refreshConversations,
+    loadMore: loadMoreConversations,
+    hasConversation,
+  } = useConversations({
+    agentId: agent?.id ?? null,
+    filter: conversationFilter,
+    listType: isInternalChat ? "internal" : "visitor",
+    status: conversationStatus,
+    enabled: isChatPage,
+    pollIntervalMs: isChatPage ? 15000 : 0,
+  });
+
+  // 非会话页：轻量拉取未读数（不阻塞页面、不全量列表）
+  const [navUnreadCount, setNavUnreadCount] = useState(0);
+  useEffect(() => {
+    if (isChatPage || !agent?.id) {
+      return;
+    }
+    let cancelled = false;
+    const pullUnread = async () => {
+      try {
+        const result = await fetchConversations(agent.id, {
+          status: "open",
+          page: 1,
+          page_size: 1,
+        });
+        if (!cancelled) {
+          setNavUnreadCount(result.total_unread);
+        }
+      } catch {
+        /* 角标失败不影响设置页 */
+      }
+    };
+    void pullUnread();
+    const timer = setInterval(pullUnread, 60000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [isChatPage, agent?.id]);
+
+  const totalUnreadCount = isChatPage ? totalUnread : navUnreadCount;
+
+  // 更新页面标题显示未读消息数
+  usePageTitle(totalUnreadCount, "AI-CS");
+
+  // 输入框内容与搜索高亮关键字
+  const [messageInput, setMessageInput] = useState("");
+  const [highlightKeyword, setHighlightKeyword] = useState("");
+
+  // 当前选中的会话信息，供右侧访客详情展示
+  const selectedConversation = useMemo(
+    () =>
+      conversations.find(
+        (conversation) => conversation.id === selectedConversationId
+      ) ?? null,
+    [conversations, selectedConversationId]
+  );
+
+  // 消息层：负责消息列表、未读状态、访客详情以及 WebSocket
+  const {
+    messages,
+    loadingMessages,
+    sending,
+    conversationDetail,
+    refreshConversationDetail,
+    refreshMessages,
+    sendMessage,
+    markMessagesAsRead,
+    updateContactInfo,
+    includeAIMessages,
+    toggleAIMessages,
+    aiThinking,
+    needWebSearch,
+    setNeedWebSearch,
+    remoteTypingDraft,
+    sendTypingDraft,
+    sendTypingStop,
+  } = useMessages({
+    conversationId: selectedConversationId,
+    agentId: agent?.id ?? null,
+    updateConversation,
+    refreshConversations,
+    hasConversation,
+    soundEnabled,
+    forceIncludeAIMessages: isInternalChat,
+  });
+
+  // 左侧选择会话时，记录关键字用于消息高亮
+  const handleConversationSelect = useCallback(
+    (conversationId: number) => {
+      if (searchQuery.trim()) {
+        setHighlightKeyword(searchQuery.trim());
+      } else {
+        setHighlightKeyword("");
+      }
+      selectConversation(conversationId);
+    },
+    [searchQuery, selectConversation]
+  );
+
+  // 发送消息：调用 service 后清空输入框
+  const handleSendMessage = useCallback(async (fileInfo?: { file_url: string; file_type: string; file_name: string; file_size: number; mime_type: string }) => {
+    const content = messageInput.trim();
+    try {
+      await sendMessage(content, fileInfo);
+      sendTypingStop();
+      setMessageInput("");
+    } catch (error) {
+      toast.error((error as Error).message);
+    }
+  }, [messageInput, sendMessage, sendTypingStop]);
+
+  useEffect(() => {
+    if (!selectedConversationId || isInternalChat) {
+      return;
+    }
+    const timer = setTimeout(() => {
+      if (messageInput.trim()) {
+        sendTypingDraft(messageInput);
+      } else {
+        sendTypingStop();
+      }
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [isInternalChat, messageInput, selectedConversationId, sendTypingDraft, sendTypingStop]);
+
+  useEffect(() => {
+    return () => {
+      sendTypingStop();
+    };
+  }, [sendTypingStop]);
+
+  // 标记当前会话全部消息为已读
+  const handleMarkAllRead = useCallback(() => {
+    if (selectedConversationId) {
+      markMessagesAsRead(selectedConversationId, true);
+    }
+  }, [markMessagesAsRead, selectedConversationId]);
+
+  const handleCloseConversation = useCallback(async () => {
+    if (!selectedConversationId) return;
+    try {
+      await closeConversation(selectedConversationId);
+      toast.success(t("agent.chat.toast.conversationClosed"));
+      // 清空选中并刷新列表/详情
+      selectConversation(null);
+      refreshConversations();
+    } catch (e) {
+      toast.error((e as Error).message || t("agent.chat.toast.closeFailed"));
+    }
+  }, [refreshConversations, selectConversation, selectedConversationId]);
+
+  // 手动刷新消息与访客详情
+  const handleRefreshChat = useCallback(() => {
+    if (!selectedConversationId) return;
+    refreshMessages(selectedConversationId);
+    refreshConversationDetail(selectedConversationId);
+  }, [refreshConversationDetail, refreshMessages, selectedConversationId]);
+
+  // 单独刷新访客详情
+  const handleRefreshVisitor = useCallback(() => {
+    if (!selectedConversationId) return;
+    refreshConversationDetail(selectedConversationId);
+  }, [refreshConversationDetail, selectedConversationId]);
+
+  // 当前会话未读数（优先使用详情返回的数据）
+  const selectedUnreadCount =
+    conversationDetail?.unread_count ??
+    selectedConversation?.unread_count ??
+    0;
+
+  // 3 秒后清除搜索高亮
+  const clearHighlight = useCallback(() => {
+    setHighlightKeyword("");
+  }, []);
+
+  // 处理个人资料更新
+  const handleProfileUpdate = useCallback(
+    (updated: Profile) => {
+      // 个人资料更新后，刷新缓存（这里可以通过更新 agent 状态来触发UI更新）
+      refreshProfile();
+    },
+    [refreshProfile]
+  );
+
+  // 处理导航切换：更新 URL ?page=，与访客端路由一致，刷新后保留当前页
+  const handleNavigate = useCallback((page: NavigationPage) => {
+    router.push(pathname + "?page=" + page);
+    if (page !== "dashboard" && page !== "internal-chat") {
+      selectConversation(null);
+    }
+  }, [pathname, router, selectConversation]);
+
+  // 新建内部对话（知识库测试）- 必须在条件 return 之前声明，保证 Hooks 顺序一致
+  const handleNewInternalConversation = useCallback(async () => {
+    if (!agent?.id) return;
+    try {
+      const { conversation_id } = await initInternalConversation();
+      refreshConversations();
+      selectConversation(conversation_id);
+    } catch (e) {
+      console.error("创建内部对话失败:", e);
+      toast.error((e as Error).message || t("agent.internalChat.createFailed"));
+    }
+  }, [agent?.id, refreshConversations, selectConversation]);
+
+  if (authLoading || (isChatPage && loading && isInitialLoad)) {
+    return (
+      <div className="flex justify-center items-center min-h-screen bg-background">
+        <div className="text-lg text-muted-foreground">加载中...</div>
+      </div>
+    );
+  }
+
+  if (!agent) {
+    return null;
+  }
+
+  const sidebarContent = isChatPage ? (
+    <div className="flex h-full">
+      <NavigationSidebar
+        currentPage={currentPage}
+        onNavigate={handleNavigate}
+        onProfileClick={() => setProfileModalOpen(true)}
+        onLogout={logout}
+        avatarUrl={profile?.avatar_url}
+        unreadChatCount={totalUnreadCount}
+      />
+      <ConversationSidebar
+        conversations={filteredConversations}
+        selectedConversationId={selectedConversationId}
+        searchQuery={searchQuery}
+        onSearchChange={setSearchQuery}
+        onSelectConversation={handleConversationSelect}
+        filter={conversationFilter}
+        onFilterChange={setConversationFilter}
+        status={conversationStatus}
+        onStatusChange={(s) => {
+          setConversationStatus(s);
+          // 切换状态时清空搜索，更直观
+          setSearchQuery("");
+        }}
+        mode={isInternalChat ? "internal" : "visitor"}
+        onNewClick={isInternalChat ? handleNewInternalConversation : undefined}
+        hasMore={hasMore}
+        loadingMore={loadingMore}
+        onLoadMore={loadMoreConversations}
+      />
+    </div>
+  ) : (
+    <div className="flex h-full">
+      <NavigationSidebar 
+        currentPage={currentPage}
+        onNavigate={handleNavigate}
+        onProfileClick={() => setProfileModalOpen(true)}
+        onLogout={logout}
+        avatarUrl={profile?.avatar_url}
+        unreadChatCount={totalUnreadCount}
+      />
+    </div>
+  );
+
+  const mainContent = (
+    <div className="flex-1 flex flex-col bg-background min-h-0">
+      {isChatPage ? (
+        selectedConversationId ? (
+          <>
+            <ChatHeader
+              conversationId={selectedConversationId}
+              lastSeenAt={conversationDetail?.last_seen_at}
+              unreadCount={selectedUnreadCount}
+              onMarkAllRead={handleMarkAllRead}
+              onCloseConversation={handleCloseConversation}
+              onRefresh={handleRefreshChat}
+              includeAIMessages={includeAIMessages}
+              onToggleAIMessages={toggleAIMessages}
+              soundEnabled={soundEnabled}
+              onToggleSound={toggleSound}
+              hideAIToggle={isInternalChat}
+              mobileGutters={{
+                left: true,
+                right:
+                  currentPage === "dashboard" && selectedConversationId != null,
+              }}
+            />
+            <MessageList
+              messages={messages}
+              loading={loadingMessages}
+              highlightKeyword={highlightKeyword}
+              onHighlightClear={clearHighlight}
+              currentUserIsAgent={true}
+              conversationId={selectedConversationId ?? null}
+              onMarkMessagesRead={markMessagesAsRead}
+              internalChatMode={isInternalChat}
+              bottomSlot={
+                  <>
+                    {!isInternalChat && remoteTypingDraft ? (
+                      <div className="flex justify-start mt-2">
+                        <div className="px-3.5 py-2.5 rounded-[18px] rounded-bl-md bg-muted/45 text-muted-foreground border border-solid border-border/70 shadow-[0_1px_3px_rgba(15,23,42,0.04)] text-sm max-w-[72%] break-words">
+                          <span>{remoteTypingDraft}</span>
+                          <span className="inline-flex items-center ml-1 align-middle">
+                            <span className="w-1 h-1 rounded-full bg-muted-foreground/60 animate-bounce [animation-duration:1.2s]" />
+                            <span className="w-1 h-1 rounded-full bg-muted-foreground/60 animate-bounce [animation-duration:1.2s] [animation-delay:0.15s] mx-0.5" />
+                            <span className="w-1 h-1 rounded-full bg-muted-foreground/60 animate-bounce [animation-duration:1.2s] [animation-delay:0.3s]" />
+                          </span>
+                        </div>
+                      </div>
+                    ) : null}
+                    {isInternalChat && aiThinking ? (
+                      <div className="flex justify-start mt-2">
+                        <div className="inline-flex items-center gap-2 px-4 py-2 rounded-2xl rounded-bl-none bg-card border border-border/50 shadow-sm text-sm text-muted-foreground">
+                          <Loader2 className="w-4 h-4 animate-spin flex-shrink-0" />
+                          <span>{t("agent.internalChat.aiThinking")}</span>
+                        </div>
+                      </div>
+                    ) : null}
+                  </>
+                }
+              />
+            {/* 知识库测试：联网选项 */}
+            {isInternalChat && (
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-2 py-2 border-t border-border/50 bg-muted/30 text-xs text-muted-foreground">
+                <div className="flex items-center gap-2">
+                  <Checkbox
+                    id="internal-need-web-search"
+                    checked={needWebSearch}
+                    onCheckedChange={(v) => setNeedWebSearch(Boolean(v))}
+                  />
+                  <Label htmlFor="internal-need-web-search" className="cursor-pointer font-normal">
+                    {t("agent.internalChat.webSearchThisTurn")}
+                  </Label>
+                </div>
+              </div>
+            )}
+            <MessageInput
+              value={messageInput}
+              onChange={setMessageInput}
+              onSubmit={handleSendMessage}
+              sending={sending}
+              conversationId={selectedConversationId ?? undefined}
+            />
+          </>
+        ) : (
+          <div className="flex-1 flex items-center justify-center text-muted-foreground text-sm px-6 text-center">
+            {isInternalChat ? t("agent.internalChat.emptyHint") : t("agent.chat.emptyPick")}
+          </div>
+        )
+      ) : (
+        <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+          {(() => {
+            const PageComponent = currentPageMeta?.component;
+            return PageComponent != null ? (
+              <PageComponent embedded={true} />
+            ) : null;
+          })()}
+        </div>
+      )}
+    </div>
+  );
+
+  const rightPanelContent = currentPage === "dashboard" && selectedConversationId ? (
+    <VisitorDetailPanel
+      conversation={selectedConversation}
+      detail={conversationDetail}
+      onRefresh={handleRefreshVisitor}
+      onUpdateContact={updateContactInfo}
+    />
+  ) : undefined;
+
+  return (
+    <>
+      <ResponsiveLayout
+        sidebar={sidebarContent}
+        main={mainContent}
+        rightPanel={rightPanelContent}
+        sidebarWidth={isChatPage ? LAYOUT.dashboardSidebarWidth : LAYOUT.navigationWidth}
+      />
+
+      {/* 个人资料弹窗 */}
+      <ProfileModal
+        profile={profile}
+        open={profileModalOpen}
+        onClose={() => setProfileModalOpen(false)}
+        onUpdate={handleProfileUpdate}
+      />
+    </>
+  );
+}

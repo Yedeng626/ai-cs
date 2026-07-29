@@ -1,0 +1,197 @@
+package infra
+
+import (
+	"fmt"
+	"io"
+	"net/url"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+)
+
+// StorageService 文件存储服务接口（可扩展为云存储）
+type StorageService interface {
+	// SaveAvatar 保存头像文件，返回文件URL
+	SaveAvatar(userID uint, file io.Reader, filename string) (string, error)
+	// SaveMessageFile 保存消息文件，返回文件URL
+	// conversationID: 对话ID，用于组织文件目录
+	// file: 文件内容
+	// filename: 原始文件名
+	SaveMessageFile(conversationID uint, file io.Reader, filename string) (string, error)
+	// ReadMessageFile 根据消息文件的 URL 或路径读取文件内容（用于多模态：识图等）
+	// fileURLOrPath 为创建消息时返回的 file_url，可为相对路径如 /uploads/messages/1/xxx.jpg 或完整 URL
+	ReadMessageFile(fileURLOrPath string) ([]byte, error)
+	// DeleteFile 删除文件
+	DeleteFile(fileURL string) error
+	// GetFileURL 获取文件的完整URL
+	GetFileURL(filePath string) string
+}
+
+// LocalStorageService 本地文件存储服务
+type LocalStorageService struct {
+	baseDir    string // 基础目录
+	publicPath string // 公共访问路径
+}
+
+// NewLocalStorageService 创建本地存储服务实例
+func NewLocalStorageService(baseDir, publicPath string) *LocalStorageService {
+	// 确保基础目录存在
+	if err := os.MkdirAll(baseDir, 0755); err != nil {
+		panic(fmt.Sprintf("创建存储目录失败: %v", err))
+	}
+	// 确保头像目录存在
+	avatarDir := filepath.Join(baseDir, "avatars")
+	if err := os.MkdirAll(avatarDir, 0755); err != nil {
+		panic(fmt.Sprintf("创建头像目录失败: %v", err))
+	}
+	return &LocalStorageService{
+		baseDir:    baseDir,
+		publicPath: publicPath,
+	}
+}
+
+// SaveAvatar 保存头像文件
+func (s *LocalStorageService) SaveAvatar(userID uint, file io.Reader, filename string) (string, error) {
+	// 获取文件扩展名
+	ext := filepath.Ext(filename)
+	if ext == "" {
+		ext = ".jpg" // 默认使用 jpg
+	}
+	// 生成唯一文件名：user_{userID}_{timestamp}{ext}
+	timestamp := time.Now().Unix()
+	newFilename := fmt.Sprintf("user_%d_%d%s", userID, timestamp, ext)
+	
+	// 保存到 avatars 目录
+	avatarDir := filepath.Join(s.baseDir, "avatars")
+	filePath := filepath.Join(avatarDir, newFilename)
+	
+	// 创建文件
+	dst, err := os.Create(filePath)
+	if err != nil {
+		return "", fmt.Errorf("创建文件失败: %w", err)
+	}
+	defer dst.Close()
+	
+	// 复制文件内容
+	if _, err := io.Copy(dst, file); err != nil {
+		return "", fmt.Errorf("保存文件失败: %w", err)
+	}
+	
+	// 返回相对路径（用于构建URL）
+	relativePath := filepath.Join("avatars", newFilename)
+	return s.GetFileURL(relativePath), nil
+}
+
+// ReadMessageFile 根据消息文件的 URL 或路径读取文件内容。
+func (s *LocalStorageService) ReadMessageFile(fileURLOrPath string) ([]byte, error) {
+	pathPart := fileURLOrPath
+	if strings.Contains(fileURLOrPath, "://") {
+		u, err := url.Parse(fileURLOrPath)
+		if err != nil {
+			return nil, fmt.Errorf("解析文件 URL 失败: %w", err)
+		}
+		pathPart = u.Path
+	}
+	pathPart = strings.TrimPrefix(pathPart, "/")
+	publicPathTrimmed := strings.TrimPrefix(strings.TrimSuffix(s.publicPath, "/"), "/")
+	if publicPathTrimmed != "" && strings.HasPrefix(pathPart, publicPathTrimmed+"/") {
+		pathPart = strings.TrimPrefix(pathPart, publicPathTrimmed+"/")
+	} else if publicPathTrimmed != "" && pathPart == publicPathTrimmed {
+		pathPart = ""
+	}
+	if pathPart == "" {
+		return nil, fmt.Errorf("无法从 URL 解析出相对路径: %s", fileURLOrPath)
+	}
+	fullPath := filepath.Join(s.baseDir, pathPart)
+	return os.ReadFile(fullPath)
+}
+
+// DeleteFile 删除文件
+func (s *LocalStorageService) DeleteFile(fileURL string) error {
+	// 从URL中提取文件路径
+	// 假设URL格式为: /uploads/avatars/filename.jpg
+	// 需要去掉 /uploads/ 前缀，得到相对路径
+	relativePath := fileURL
+	if len(s.publicPath) > 0 && len(fileURL) > len(s.publicPath) {
+		if fileURL[:len(s.publicPath)] == s.publicPath {
+			relativePath = fileURL[len(s.publicPath):]
+			// 去掉开头的 /
+			if len(relativePath) > 0 && relativePath[0] == '/' {
+				relativePath = relativePath[1:]
+			}
+		}
+	}
+	
+	filePath := filepath.Join(s.baseDir, relativePath)
+	if err := os.Remove(filePath); err != nil {
+		if os.IsNotExist(err) {
+			return nil // 文件不存在，认为删除成功
+		}
+		return fmt.Errorf("删除文件失败: %w", err)
+	}
+	return nil
+}
+
+// SaveMessageFile 保存消息文件
+func (s *LocalStorageService) SaveMessageFile(conversationID uint, file io.Reader, filename string) (string, error) {
+	// 获取文件扩展名
+	ext := filepath.Ext(filename)
+	if ext == "" {
+		ext = ".bin" // 默认扩展名
+	}
+	// 生成唯一文件名：{timestamp}_{原始文件名}
+	timestamp := time.Now().Unix()
+	// 清理文件名，移除特殊字符
+	safeFilename := filepath.Base(filename)
+	if len(safeFilename) > 100 {
+		// 文件名过长，截断
+		safeFilename = safeFilename[:100]
+	}
+	newFilename := fmt.Sprintf("%d_%s", timestamp, safeFilename)
+	
+	// 按对话ID组织目录：messages/{conversationID}/
+	messageDir := filepath.Join(s.baseDir, "messages", fmt.Sprintf("%d", conversationID))
+	if err := os.MkdirAll(messageDir, 0755); err != nil {
+		return "", fmt.Errorf("创建消息文件目录失败: %w", err)
+	}
+	
+	filePath := filepath.Join(messageDir, newFilename)
+	
+	// 创建文件
+	dst, err := os.Create(filePath)
+	if err != nil {
+		return "", fmt.Errorf("创建文件失败: %w", err)
+	}
+	defer dst.Close()
+	
+	// 复制文件内容
+	if _, err := io.Copy(dst, file); err != nil {
+		return "", fmt.Errorf("保存文件失败: %w", err)
+	}
+	
+	// 返回相对路径（用于构建URL）
+	relativePath := filepath.Join("messages", fmt.Sprintf("%d", conversationID), newFilename)
+	return s.GetFileURL(relativePath), nil
+}
+
+// GetFileURL 获取文件的完整URL
+func (s *LocalStorageService) GetFileURL(filePath string) string {
+	// 确保路径使用正斜杠（用于URL）
+	urlPath := filepath.ToSlash(filePath)
+	// 如果 publicPath 为空，返回相对路径
+	if s.publicPath == "" {
+		return "/" + urlPath
+	}
+	// 确保 publicPath 以 / 结尾
+	publicPath := s.publicPath
+	if publicPath[len(publicPath)-1] != '/' {
+		publicPath += "/"
+	}
+	// 确保 urlPath 不以 / 开头
+	if len(urlPath) > 0 && urlPath[0] == '/' {
+		urlPath = urlPath[1:]
+	}
+	return publicPath + urlPath
+}
+

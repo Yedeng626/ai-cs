@@ -1,0 +1,40 @@
+/**
+ * 官网配置文件
+ * 请根据实际情况修改以下配置
+ */
+
+export const websiteConfig = {
+  /** 在线演示站点（「立即体验 / 打开 Demo」等入口） */
+  demoUrl: "https://demo.cscorp.top",
+
+  // GitHub 仓库地址
+  github: {
+    repo: "https://github.com/2930134478/AI-CS",
+    releases: "https://github.com/2930134478/AI-CS/releases",
+    issues: "https://github.com/2930134478/AI-CS/issues",
+    readme: "https://github.com/2930134478/AI-CS/blob/master/README.md",
+  },
+  
+  // 联系方式
+  contact: {
+    email: "contact@example.com", // 可选：邮箱地址
+    wechat: "", // 可选：微信号或微信群链接
+    /** QQ 交流群号（纯数字或展示文案）；留空则页脚不显示 */
+    qqGroupNumber: "",
+    /** 可选：一键加群链接（如 https://qm.qq.com/q/xxxxx ），有则页脚可点击 */
+    qqGroupJoinUrl: "",
+  },
+  
+  // 友情链接（用于互相引流）
+  // 格式：{ name: "链接名称", url: "链接地址" }
+  friendLinks: [
+    { name: "Poixe免费API赞助", url: "https://poixe.com/products/free" },
+  ] as Array<{ name: string; url: string }>,
+  
+  // 其他配置
+  copyright: {
+    company: "AI-CS 智能客服系统", // 公司/产品名称
+    year: new Date().getFullYear(),
+  },
+};
+
