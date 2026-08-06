@@ -58,7 +58,6 @@ backend/uploads/
 *.bak
 backend/backend-new
 backend/Dockerfile.patch
-deploy.sh
 docker-compose.mini.yml
 docker-compose.mini.yml.bak
 nginx-default.conf.bak
