@@ -1,0 +1,105 @@
+# ============================================
+# AI-CS 单体镜像 — Go后端 + Next.js前端 + BGE嵌入 + Nginx
+# 多阶段构建，最终一个镜像包含全部 4 个服务
+# 构建耗时约 15-25 分钟（Go编译 + npm build + PyTorch 下载）
+# 镜像大小约 2.5-3GB（含 PyTorch + BGE模型 190MB）
+# ============================================
+
+# ============================================
+# Stage 1: Build Go backend（复用现有 Dockerfile 逻辑）
+# ============================================
+FROM golang:1.24-alpine AS go-builder
+WORKDIR /app
+RUN apk add --no-cache git ca-certificates tzdata
+COPY backend/go.mod backend/go.sum ./
+ENV GOPROXY=https://goproxy.cn,direct
+RUN go mod download
+COPY backend/ ./
+RUN mkdir -p /app/data && touch /app/data/ip2region_v4.xdb /app/data/ip2region_v6.xdb
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -installsuffix cgo \
+    -ldflags '-extldflags "-static" -s -w' -o backend main.go
+
+# ============================================
+# Stage 2: Build Next.js frontend（复用现有 Dockerfile 逻辑）
+# ============================================
+FROM node:20-alpine AS node-builder
+WORKDIR /app
+COPY frontend/package*.json ./
+RUN npm ci
+COPY frontend/ ./
+RUN npm run build
+
+# ============================================
+# Stage 3: 最终运行镜像
+# 基础: python:3.11-slim (Debian slim, ~150MB)
+# + nginx + nodejs 20 + PyTorch/sentence-transformers + supervisor
+# ============================================
+FROM python:3.11-slim
+
+# --- 系统依赖：nginx + nodejs 20 ---
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    nginx \
+    curl \
+    ca-certificates \
+    gnupg \
+    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y nodejs \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# --- supervisord（进程管理器） ---
+RUN pip install --no-cache-dir supervisor
+
+# --- BGE embedding 依赖（PyTorch ~1.5GB，耗时最长的层） ---
+RUN pip install --no-cache-dir --default-timeout=300 \
+    -i https://mirrors.cloud.tencent.com/pypi/simple/ \
+    --trusted-host mirrors.cloud.tencent.com \
+    sentence-transformers==2.7.0 \
+    fastapi==0.115.0 \
+    "uvicorn[standard]==0.30.0"
+
+WORKDIR /app
+
+# --- Go 后端二进制 + ip2region 数据 ---
+COPY --from=go-builder /app/backend /app/backend
+COPY --from=go-builder /app/data/ip2region_v4.xdb /app/data/ip2region_v4.xdb
+COPY --from=go-builder /app/data/ip2region_v6.xdb /app/data/ip2region_v6.xdb
+RUN chmod +x /app/backend
+
+# --- Next.js 生产构建 + 安装生产依赖 ---
+COPY --from=node-builder /app/package*.json /app/frontend/
+COPY --from=node-builder /app/next.config.mjs /app/frontend/
+COPY --from=node-builder /app/public /app/frontend/public
+COPY --from=node-builder /app/.next /app/frontend/.next
+RUN cd /app/frontend && npm ci --only=production && npm cache clean --force
+
+# --- BGE embedding 模型（190MB，离线模式） ---
+COPY embedding-svc/model /app/model
+
+# --- BGE serve.py ---
+COPY embedding-svc/serve.py /app/serve.py
+
+# --- 上传文件目录 ---
+RUN mkdir -p /app/uploads/avatars /app/uploads/messages
+
+# --- Nginx 配置（用 127.0.0.1 替代原 Docker 容器名） ---
+COPY nginx-internal.conf /etc/nginx/conf.d/default.conf
+RUN rm -f /etc/nginx/sites-enabled/default
+
+# --- Supervisord 配置 ---
+COPY supervisord.conf /etc/supervisord.conf
+
+EXPOSE 80
+
+# ============================================
+# 环境变量默认值（运行时可通过 docker run -e 覆盖）
+# ============================================
+ENV TZ=Asia/Shanghai
+ENV HF_HUB_OFFLINE=1
+ENV TRANSFORMERS_OFFLINE=1
+ENV MODEL_PATH=/app/model/BAAI/bge-small-zh-v1.5
+ENV PORT=8088
+ENV BGE_MODEL=BAAI/bge-small-zh-v1.5
+ENV NODE_ENV=production
+ENV GIN_MODE=release
+
+CMD ["supervisord", "-c", "/etc/supervisord.conf"]

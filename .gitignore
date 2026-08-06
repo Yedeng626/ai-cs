@@ -69,3 +69,7 @@ nginx-default.conf.bak
 
 # ---- 模型文件（不应上传 Git） ----
 embedding-svc/model/
+
+# ---- 挂载模式编译产物（不提交） ----
+mount/bin/
+mount/next/

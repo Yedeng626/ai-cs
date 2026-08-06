@@ -1,0 +1,35 @@
+# ============================================
+# AI-CS Base — 基础环境（几乎不变）
+# Python + Node.js + Nginx + PyTorch + BGE 模型 + supervisord
+# 大小约 5.8GB，变更频率极低
+# ============================================
+FROM python:3.11-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    nginx curl ca-certificates gnupg \
+    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y nodejs \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+RUN pip install --no-cache-dir supervisor
+
+RUN pip install --no-cache-dir --default-timeout=300 \
+    -i https://mirrors.cloud.tencent.com/pypi/simple/ \
+    --trusted-host mirrors.cloud.tencent.com \
+    sentence-transformers==2.7.0 fastapi==0.115.0 "uvicorn[standard]==0.30.0"
+
+WORKDIR /app
+
+COPY embedding-svc/model /app/model
+COPY embedding-svc/serve.py /app/serve.py
+
+RUN mkdir -p /app/uploads/avatars /app/uploads/messages
+
+ENV TZ=Asia/Shanghai \
+    HF_HUB_OFFLINE=1 \
+    TRANSFORMERS_OFFLINE=1 \
+    MODEL_PATH=/app/model/BAAI/bge-small-zh-v1.5 \
+    PORT=8088 \
+    BGE_MODEL=BAAI/bge-small-zh-v1.5 \
+    NODE_ENV=production \
+    GIN_MODE=release
