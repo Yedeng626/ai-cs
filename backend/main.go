@@ -383,7 +383,10 @@ func main() {
 	// 声明 Hub / 离线邮件变量（Hub 创建后完成注入）
 	var wsHub *websocket.Hub
 	var offlineEmailSvc *service.OfflineEmailService
-	dingTalkService := service.NewDingTalkService(os.Getenv("DINGTALK_WEBHOOK_URL"))
+	dingTalkService := service.NewDingTalkService(
+		os.Getenv("DINGTALK_WEBHOOK_URL"),
+		os.Getenv("DINGTALK_SUPERVISOR_WEBHOOK_URL"),
+	)
 	var dispatchService *service.DispatchService
 
 	// 创建 WebSocket Hub，设置回调函数来处理客户端连接/断开事件
