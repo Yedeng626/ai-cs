@@ -152,18 +152,22 @@ type UserSummary struct {
 	Email                  string    `json:"email"`
 	AvatarURL              string    `json:"avatar_url"`
 	ReceiveAIConversations bool      `json:"receive_ai_conversations"`
+	NotifyPlatform         string    `json:"notify_platform"`          // 个人消息通知渠道：dingtalk/feishu/wecom
+	WebhookURL             string    `json:"dingtalk_webhook_url"`     // 个人机器人 webhook URL（三平台通用，字段名兼容旧版）
 	CreatedAt              time.Time `json:"created_at"`
 	UpdatedAt              time.Time `json:"updated_at"`
 }
 
 // CreateUserInput 创建用户输入。
 type CreateUserInput struct {
-	Username string  // 用户名（必需）
-	Password string  // 密码（必需）
-	Role     string  // 角色："admin" 或 "agent"（必需）
-	Permissions []string // 功能权限（可选；role=admin 时忽略）
-	Nickname *string // 昵称（可选）
-	Email    *string // 邮箱（可选）
+	Username       string  // 用户名（必需）
+	Password       string  // 密码（必需）
+	Role           string  // 角色："admin" 或 "agent"（必需）
+	Permissions    []string // 功能权限（可选；role=admin 时忽略）
+	Nickname       *string // 昵称（可选）
+	Email          *string // 邮箱（可选）
+	NotifyPlatform *string // 个人消息通知渠道（可选）
+	WebhookURL     *string // 个人机器人 webhook URL（可选）
 }
 
 // UpdateUserInput 更新用户输入。
@@ -174,6 +178,8 @@ type UpdateUserInput struct {
 	Nickname               *string // 昵称（可选）
 	Email                  *string // 邮箱（可选）
 	ReceiveAIConversations *bool   // 是否接收 AI 对话（可选）
+	NotifyPlatform         *string // 个人消息通知渠道（可选）
+	WebhookURL             *string // 个人机器人 webhook URL（可选）
 }
 
 // UpdatePasswordInput 更新密码输入。

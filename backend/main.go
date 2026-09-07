@@ -144,7 +144,7 @@ func main() {
 	}
 
 	//根据结构体定义自动创建更新表
-	if err := db.AutoMigrate(&models.User{}, &models.Conversation{}, &models.Message{}, &models.AIConfig{}, &models.FAQ{}, &models.KnowledgeBase{}, &models.Document{}, &models.DocumentChunk{}, &models.EmbeddingConfig{}, &models.EmailNotificationConfig{}, &models.OfflineEmailJob{}, &models.PromptConfig{}, &models.WidgetOpenEvent{}, &models.SystemLog{}, &models.AppSetting{}); err != nil {
+	if err := db.AutoMigrate(&models.User{}, &models.Conversation{}, &models.Message{}, &models.AIConfig{}, &models.FAQ{}, &models.KnowledgeBase{}, &models.Document{}, &models.DocumentChunk{}, &models.EmbeddingConfig{}, &models.EmailNotificationConfig{}, &models.OfflineEmailJob{}, &models.PromptConfig{}, &models.WidgetOpenEvent{}, &models.SystemLog{}, &models.AppSetting{}, &models.AgentDispatchState{}, &models.NotificationChannel{}); err != nil {
 		log.Fatalf("自动创建表失败： %v", err)
 	}
 
@@ -383,7 +383,7 @@ func main() {
 	// 声明 Hub / 离线邮件变量（Hub 创建后完成注入）
 	var wsHub *websocket.Hub
 	var offlineEmailSvc *service.OfflineEmailService
-	dingTalkService := service.NewDingTalkService(
+	notifyService := service.NewNotifyService(db,
 		os.Getenv("DINGTALK_WEBHOOK_URL"),
 		os.Getenv("DINGTALK_SUPERVISOR_WEBHOOK_URL"),
 	)
@@ -523,9 +523,10 @@ func main() {
 	messageService := service.NewMessageService(db, conversationRepo, messageRepo, wsHub, aiService)
 	messageService.SetOfflineEmailService(offlineEmailSvc)
 	// 客服轮询分派
-	dispatchService = service.NewDispatchService(db, wsHub, dingTalkService)
+	dispatchService = service.NewDispatchService(db, wsHub, notifyService)
 	dispatchService.StartTimeoutChecker()
 	messageService.SetDispatchService(dispatchService)
+	conversationService.SetDispatchService(dispatchService) // 访客选人工客服 → 触发派单
 	visitorService := service.NewVisitorService(userRepo, wsHub)
 
 	// 初始化控制器
@@ -550,6 +551,7 @@ func main() {
 	analyticsService := service.NewAnalyticsService(db, widgetOpenRepo)
 	analyticsController := controller.NewAnalyticsController(analyticsService, userService)
 	systemLogController := controller.NewSystemLogController(systemLogService, userService, appSettingRepo)
+	notificationChannelController := controller.NewNotificationChannelController(notifyService, userService)
 
 	appRouter.RegisterRoutes(
 		r,
@@ -568,6 +570,7 @@ func main() {
 			Import:          importController, // 导入控制器
 			DocumentChunk:   chunkController,  // 分段控制器
 			EmailNotification: emailNotificationController,
+			NotificationChannel: notificationChannelController,
 			Visitor:         visitorController,
 			Health:          healthController, // 健康检查控制器
 			Analytics:       analyticsController,

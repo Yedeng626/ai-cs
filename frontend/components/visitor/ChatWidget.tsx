@@ -146,7 +146,6 @@ export function ChatWidget({
   const [widgetConfig, setWidgetConfig] = useState<VisitorWidgetConfig | null>(null);
   const typingSeqRef = useRef(0);
   const typingTimerRef = useRef<NodeJS.Timeout | null>(null);
-  const initRef = useRef(false);
 
   // 声音通知开关（访客端）
   const { enabled: soundEnabled, toggle: toggleSound } = useSoundNotification(true);
@@ -294,20 +293,7 @@ export function ChatWidget({
     []
   );
 
-  // 初始化默认对话（人工模式）；initRef 防止 Strict Mode 双次 mount 创建两个会话
-  useEffect(() => {
-    if (
-      visitorId !== null &&
-      !conversationId &&
-      !initializing &&
-      isOpen &&
-      !initRef.current
-    ) {
-      initRef.current = true;
-      initializeConversation(visitorId, "ai");
-    }
-  }, [visitorId, conversationId, initializing, isOpen, initializeConversation]);
-
+  // 会话存在但 accessToken 尚未 set 时，从 localStorage 恢复
   useEffect(() => {
     if (conversationId && !accessToken) {
       const stored = getVisitorAccessToken(conversationId);
@@ -317,7 +303,7 @@ export function ChatWidget({
     }
   }, [conversationId, accessToken]);
 
-  // 处理模式切换
+  // 处理模式切换（选择卡 / 会话内常驻切换共用）
   const handleModeSwitch = useCallback(
     (mode: "human" | "ai") => {
       if (visitorId === null || initializing) {
@@ -746,6 +732,9 @@ export function ChatWidget({
     return null;
   }
 
+  // 尚无会话 → 显示「AI / 人工客服」选择卡（选择后才创建会话）；初始化中显示 loading
+  const noConversationYet = conversationId === null;
+
   const panel = (
     <Card
       className={cn(
@@ -836,10 +825,109 @@ export function ChatWidget({
         </div>
       </div>
 
-      {/* 模式切换和在线客服列表 */}
-      <div className="px-4 py-3 border-b border-slate-200 bg-slate-50">
-        {/* 智能客服模式 */}      </div>
-
+      {noConversationYet ? (
+        initializing ? (
+          /* 正在创建会话 */
+          <div className="flex-1 min-h-0 bg-slate-50 flex items-center justify-center">
+            <div className="flex flex-col items-center gap-3 text-slate-400">
+              <Loader2 className="w-7 h-7 animate-spin" />
+              <span className="text-sm">正在连接...</span>
+            </div>
+          </div>
+        ) : (
+          /* ===== 服务选择卡：AI 客服 / 人工客服 ===== */
+          <div className="flex-1 min-h-0 overflow-y-auto bg-slate-50 px-4 py-6 flex flex-col gap-4">
+            <div className="text-center">
+              <div className="text-base font-bold text-slate-800">您好，需要什么帮助？</div>
+              <div className="text-xs text-slate-500 mt-1">请选择服务方式</div>
+            </div>
+            <button
+              type="button"
+              onClick={() => handleModeSwitch("ai")}
+              disabled={initializing}
+              className="text-left rounded-2xl border border-blue-200 bg-white p-4 shadow-sm hover:border-blue-400 hover:shadow transition-all focus:outline-none focus:ring-2 focus:ring-blue-200 disabled:opacity-50"
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-[#2563eb] to-[#3b82f6] text-white flex items-center justify-center flex-shrink-0">
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13a9 9 0 019-9 9 9 0 019 9v2a3 3 0 01-3 3H6a3 3 0 01-3-3v-2z" />
+                  </svg>
+                </div>
+                <div className="min-w-0">
+                  <div className="font-semibold text-slate-800">AI 智能客服</div>
+                  <div className="text-xs text-slate-500 mt-0.5 leading-relaxed">
+                    7×24 即时响应，基于知识库智能问答
+                  </div>
+                </div>
+              </div>
+            </button>
+            <button
+              type="button"
+              onClick={() => handleModeSwitch("human")}
+              disabled={initializing}
+              className="text-left rounded-2xl border border-slate-200 bg-white p-4 shadow-sm hover:border-blue-400 hover:shadow transition-all focus:outline-none focus:ring-2 focus:ring-blue-200 disabled:opacity-50"
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-slate-700 text-white flex items-center justify-center flex-shrink-0">
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a4 4 0 00-3-3.87M9 20H4v-2a4 4 0 013-3.87m6-1.13a4 4 0 10-4-4 4 4 0 004 4zm6 0a4 4 0 10-6.5-3.1" />
+                  </svg>
+                </div>
+                <div className="min-w-0">
+                  <div className="font-semibold text-slate-800">人工客服</div>
+                  <div className="text-xs text-slate-500 mt-0.5 leading-relaxed">
+                    转接在线客服，人工实时接待
+                  </div>
+                </div>
+              </div>
+            </button>
+            <p className="text-center text-[11px] text-slate-400 px-2">
+              会话内容将保留，可在聊天中随时切换 AI / 人工
+            </p>
+          </div>
+        )
+      ) : (
+        <>
+        {/* 会话内常驻 AI/人工 切换 */}
+        <div className="px-4 py-2 border-b border-slate-200 bg-slate-50 flex items-center justify-between gap-2">
+          <div className="inline-flex rounded-lg border border-slate-200 bg-white p-0.5">
+            <button
+              type="button"
+              disabled={initializing || chatMode === "ai"}
+              onClick={() => handleModeSwitch("ai")}
+              className={`px-3 py-1 text-xs rounded-md transition-colors disabled:cursor-default ${
+                chatMode === "ai"
+                  ? "bg-blue-600 text-white font-medium"
+                  : "text-slate-600 hover:bg-slate-100"
+              }`}
+            >
+              AI 客服
+            </button>
+            <button
+              type="button"
+              disabled={initializing || chatMode === "human"}
+              onClick={() => handleModeSwitch("human")}
+              className={`px-3 py-1 text-xs rounded-md transition-colors disabled:cursor-default ${
+                chatMode === "human"
+                  ? "bg-blue-600 text-white font-medium"
+                  : "text-slate-600 hover:bg-slate-100"
+              }`}
+            >
+              人工客服
+            </button>
+          </div>
+          <div className="flex items-center gap-1.5 text-xs text-slate-400 min-w-0">
+            {chatMode === "human" ? (
+              <>
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 flex-shrink-0" />
+                <span className="truncate">在线客服接待中</span>
+              </>
+            ) : (
+              <span className="truncate">AI 即时回复中</span>
+            )}
+          </div>
+        </div>
+        
       {/* 消息列表 */}
       <div className="flex-1 overflow-hidden min-h-0 bg-slate-50">
         <MessageList
@@ -974,6 +1062,8 @@ export function ChatWidget({
           }
         />
       </div>
+        </>
+      )}
     </Card>
   );
 

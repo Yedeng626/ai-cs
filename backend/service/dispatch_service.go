@@ -34,10 +34,13 @@ type DispatchService struct {
 	hub      DispatchHub
 	mu       sync.Mutex
 	agentIDs []uint
-	dingTalk *DingTalkService
+	notifier *NotifyService
 	// notifiedAdmin tracks which conversations already had admin notified (avoid spam)
 	notifiedAdmin map[uint]bool
 	muNotified    sync.Mutex
+	// supervisorNotified tracks conversations where the supervisor (主管) was already
+	// notified after max reassign rounds — prevents spam every 10s tick
+	supervisorNotified map[uint]bool
 	// reassignCount tracks how many times each conversation has been reassigned
 	reassignCount map[uint]int
 	muReassign    sync.Mutex
@@ -45,14 +48,15 @@ type DispatchService struct {
 	skippedAgents map[uint][]string
 }
 
-func NewDispatchService(db *gorm.DB, hub DispatchHub, dingTalk *DingTalkService) *DispatchService {
+func NewDispatchService(db *gorm.DB, hub DispatchHub, notifier *NotifyService) *DispatchService {
 	s := &DispatchService{
-		db:            db,
-		hub:           hub,
-		dingTalk:      dingTalk,
-		notifiedAdmin: make(map[uint]bool),
-		reassignCount: make(map[uint]int),
-		skippedAgents: make(map[uint][]string),
+		db:                db,
+		hub:               hub,
+		notifier:          notifier,
+		notifiedAdmin:     make(map[uint]bool),
+		supervisorNotified: make(map[uint]bool),
+		reassignCount:     make(map[uint]int),
+		skippedAgents:     make(map[uint][]string),
 	}
 	s.refreshAgents()
 	return s
@@ -93,6 +97,7 @@ func (s *DispatchService) OnAgentConnected(conversationID uint, agentID uint) {
 	// 清除管理员已通知标记（重新开始计时）
 	s.muNotified.Lock()
 	delete(s.notifiedAdmin, conversationID)
+	delete(s.supervisorNotified, conversationID) // 客服已接入，允许后续新派单轮次重新通知主管
 	s.muNotified.Unlock()
 	// 清除重分配计数（客服已接入，重置轮次）
 	s.muReassign.Lock()
@@ -108,22 +113,32 @@ func (s *DispatchService) DispatchToAgent(convID uint) error {
 	if len(s.agentIDs) == 0 {
 		s.mu.Unlock()
 		s.notifyAll(convID, "暂无可用客服")
+		s.notifier.NotifyNoAgentOnline(convID)
 		return fmt.Errorf("no agents")
 	}
 
-	var state struct {
-		ID        uint `gorm:"primaryKey"`
-		NextIndex int
+	var state models.AgentDispatchState
+	if err := s.db.FirstOrCreate(&state, "id = ?", 1).Error; err != nil {
+		s.mu.Unlock()
+		log.Printf("[dispatch] 读取派单状态失败: %v", err)
+		return fmt.Errorf("read dispatch state: %w", err)
 	}
-	s.db.FirstOrCreate(&state, "id = ?", 1)
 	startIdx := state.NextIndex % len(s.agentIDs)
 	agentID := s.pickOnline(startIdx)
 	state.NextIndex = (state.NextIndex + 1) % (len(s.agentIDs) * 100)
-	s.db.Save(&state)
+	if err := s.db.Save(&state).Error; err != nil {
+		log.Printf("[dispatch] 保存派单状态失败: %v", err)
+	}
 	s.mu.Unlock()
 
 	if agentID == 0 {
 		s.notifyAll(convID, "当前无在线客服")
+		s.notifier.NotifyNoAgentOnline(convID)
+		// 无在线客服已通过 NotifyNoAgentOnline 通知主管；置位防 CheckTimeouts
+		// 每 10s tick 反复把同一会话判为"超时未接入"再次刷屏。
+		s.muNotified.Lock()
+		s.supervisorNotified[convID] = true
+		s.muNotified.Unlock()
 		return fmt.Errorf("no online agents")
 	}
 
@@ -160,7 +175,7 @@ func (s *DispatchService) DispatchToAgent(convID uint) error {
 	}
 
 	// 钉钉通知：群 + 被分配客服个人机器人
-	s.dingTalk.NotifyManualRequest(convID, sysName, user.DingtalkWebhookURL)
+	s.notifier.NotifyManualRequest(convID, sysName, user.DingtalkWebhookURL, user.NotifyPlatform)
 
 	log.Printf("[dispatch] 对话 %d → 客服 %s(id=%d)", convID, sysName, agentID)
 	return nil
@@ -194,6 +209,13 @@ func (s *DispatchService) CheckTimeouts() {
 		// 阶段1: 未接入超过 60s
 		if conv.AgentJoinedAt == nil {
 			if now.Sub(*conv.AssignedAt) > noJoinTimeout {
+				// 主管已通知过（达到 maxReassigns）→ 跳过后续 tick，防止每 10s 刷屏
+				s.muNotified.Lock()
+				supDone := s.supervisorNotified[conv.ID]
+				s.muNotified.Unlock()
+				if supDone {
+					continue
+				}
 				// 获取被跳过的客服信息
 				var oldUser models.User
 				s.db.Where("id = ?", *conv.AssignedAgentID).First(&oldUser)
@@ -210,10 +232,13 @@ func (s *DispatchService) CheckTimeouts() {
 				s.muReassign.Unlock()
 
 				// 通知原客服被跳过
-				s.dingTalk.NotifyAgentSkipped(oldUser.DingtalkWebhookURL, conv.ID, oldName)
+				s.notifier.NotifyAgentSkipped(oldUser.DingtalkWebhookURL, oldUser.NotifyPlatform, conv.ID, oldName)
 
 				if reassignCount >= maxReassigns {
-					// 两轮已完成，通知主管
+					// 两轮已完成，通知主管（仅一次）
+					s.muNotified.Lock()
+					s.supervisorNotified[conv.ID] = true
+					s.muNotified.Unlock()
 					s.muReassign.Lock()
 					skipped := s.skippedAgents[conv.ID]
 					s.muReassign.Unlock()
@@ -223,7 +248,7 @@ func (s *DispatchService) CheckTimeouts() {
 					}
 					log.Printf("[dispatch] 对话 %d: 已连续 %d 轮未接入（%s），通知主管",
 						conv.ID, reassignCount, skippedStr)
-					s.dingTalk.NotifySupervisorNoAgent(conv.ID, skippedStr)
+					s.notifier.NotifySupervisorNoAgent(conv.ID, skippedStr)
 
 					// 发一条系统消息给访客
 					sysMsg := models.Message{
@@ -281,8 +306,8 @@ func (s *DispatchService) CheckTimeouts() {
 				})
 			}
 
-			// 钉钉通知：超时提醒
-			s.dingTalk.NotifyTimeout(conv.ID, agentName, int(noReplyTimeout.Seconds()))
+			// 通知：超时提醒
+			s.notifier.NotifyTimeout(conv.ID, agentName, int(noReplyTimeout.Seconds()))
 
 			s.muNotified.Lock()
 			s.notifiedAdmin[conv.ID] = true

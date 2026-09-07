@@ -10,6 +10,8 @@ export interface UserSummary {
   email: string;
   avatar_url: string;
   receive_ai_conversations: boolean;
+  notify_platform?: string; // 个人消息通知渠道：dingtalk/feishu/wecom
+  dingtalk_webhook_url?: string; // 个人机器人 webhook URL
   created_at: string;
   updated_at: string;
 }
@@ -22,6 +24,8 @@ export interface CreateUserRequest {
   permissions?: string[];
   nickname?: string;
   email?: string;
+  notify_platform?: string;
+  dingtalk_webhook_url?: string;
 }
 
 // 更新用户请求
@@ -31,6 +35,8 @@ export interface UpdateUserRequest {
   nickname?: string;
   email?: string;
   receive_ai_conversations?: boolean;
+  notify_platform?: string;
+  dingtalk_webhook_url?: string;
 }
 
 // 更新密码请求

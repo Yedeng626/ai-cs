@@ -146,12 +146,14 @@ func (a *AdminController) CreateUser(c *gin.Context) {
 	_ = currentUserID
 
 	var req struct {
-		Username    string   `json:"username"`
-		Password    string   `json:"password"`
-		Role        string   `json:"role"`
-		Permissions []string `json:"permissions"`
-		Nickname    *string  `json:"nickname"`
-		Email       *string  `json:"email"`
+		Username       string   `json:"username"`
+		Password       string   `json:"password"`
+		Role           string   `json:"role"`
+		Permissions    []string `json:"permissions"`
+		Nickname       *string  `json:"nickname"`
+		Email          *string  `json:"email"`
+		NotifyPlatform *string  `json:"notify_platform"`
+		WebhookURL     *string  `json:"dingtalk_webhook_url"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -160,12 +162,14 @@ func (a *AdminController) CreateUser(c *gin.Context) {
 	}
 
 	user, err := a.userService.CreateUser(service.CreateUserInput{
-		Username:    req.Username,
-		Password:    req.Password,
-		Role:        req.Role,
-		Permissions: req.Permissions,
-		Nickname:    req.Nickname,
-		Email:       req.Email,
+		Username:       req.Username,
+		Password:       req.Password,
+		Role:           req.Role,
+		Permissions:    req.Permissions,
+		Nickname:       req.Nickname,
+		Email:          req.Email,
+		NotifyPlatform: req.NotifyPlatform,
+		WebhookURL:     req.WebhookURL,
 	})
 	if err != nil {
 		switch err {
@@ -207,6 +211,8 @@ func (a *AdminController) UpdateUser(c *gin.Context) {
 		Nickname               *string   `json:"nickname"`
 		Email                  *string   `json:"email"`
 		ReceiveAIConversations *bool     `json:"receive_ai_conversations"`
+		NotifyPlatform         *string   `json:"notify_platform"`
+		WebhookURL             *string   `json:"dingtalk_webhook_url"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -221,6 +227,8 @@ func (a *AdminController) UpdateUser(c *gin.Context) {
 		Nickname:               req.Nickname,
 		Email:                  req.Email,
 		ReceiveAIConversations: req.ReceiveAIConversations,
+		NotifyPlatform:         req.NotifyPlatform,
+		WebhookURL:             req.WebhookURL,
 	})
 	if err != nil {
 		if err.Error() == "用户不存在" {

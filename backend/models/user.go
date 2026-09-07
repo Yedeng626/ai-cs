@@ -19,7 +19,9 @@ type User struct {
 	ReceiveAIConversations bool      `json:"receive_ai_conversations" gorm:"default:true"` // 是否接收 AI 对话（默认接收）
 	CreatedAt              time.Time `json:"created_at"`                                   // 创建时间
 	UpdatedAt              time.Time `json:"updated_at"`                                   // 更新时间
-	// 个人钉钉机器人 webhook URL，派单时优先用此 URL 通知该客服（为空则回退群 webhook）
+	// 个人消息通知渠道：dingtalk / feishu / wecom（默认钉钉）
+	NotifyPlatform string `json:"notify_platform" gorm:"type:varchar(20);default:'dingtalk'"`
+	// 个人机器人 webhook URL（钉钉/飞书/企微通用），派单时优先用此 URL 通知该客服（为空则回退群 webhook）
 	DingtalkWebhookURL string `json:"dingtalk_webhook_url" gorm:"type:varchar(500)"`
 }
 

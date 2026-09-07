@@ -62,6 +62,23 @@ func (s *UserService) CheckPermission(userID uint, perm string) error {
 	return fmt.Errorf("权限不足：缺少功能权限 %s", perm)
 }
 
+func toUserSummary(user models.User, perms []string) UserSummary {
+	return UserSummary{
+		ID:                     user.ID,
+		Username:               user.Username,
+		Role:                   user.Role,
+		Permissions:            perms,
+		Nickname:               user.Nickname,
+		Email:                  user.Email,
+		AvatarURL:              user.AvatarURL,
+		ReceiveAIConversations: user.ReceiveAIConversations,
+		NotifyPlatform:         user.NotifyPlatform,
+		WebhookURL:             user.DingtalkWebhookURL,
+		CreatedAt:              user.CreatedAt,
+		UpdatedAt:              user.UpdatedAt,
+	}
+}
+
 // ListUsers 获取所有用户列表。
 func (s *UserService) ListUsers() ([]UserSummary, error) {
 	users, err := s.users.ListUsers()
@@ -71,18 +88,7 @@ func (s *UserService) ListUsers() ([]UserSummary, error) {
 
 	summaries := make([]UserSummary, 0, len(users))
 	for _, user := range users {
-		summaries = append(summaries, UserSummary{
-			ID:                     user.ID,
-			Username:               user.Username,
-			Role:                   user.Role,
-			Permissions:            s.EffectivePermissions(&user),
-			Nickname:               user.Nickname,
-			Email:                  user.Email,
-			AvatarURL:              user.AvatarURL,
-			ReceiveAIConversations: user.ReceiveAIConversations,
-			CreatedAt:              user.CreatedAt,
-			UpdatedAt:              user.UpdatedAt,
-		})
+		summaries = append(summaries, toUserSummary(user, s.EffectivePermissions(&user)))
 	}
 
 	return summaries, nil
@@ -98,18 +104,8 @@ func (s *UserService) GetUser(id uint) (*UserSummary, error) {
 		return nil, err
 	}
 
-	return &UserSummary{
-		ID:                     user.ID,
-		Username:               user.Username,
-		Role:                   user.Role,
-		Permissions:            s.EffectivePermissions(user),
-		Nickname:               user.Nickname,
-		Email:                  user.Email,
-		AvatarURL:              user.AvatarURL,
-		ReceiveAIConversations: user.ReceiveAIConversations,
-		CreatedAt:              user.CreatedAt,
-		UpdatedAt:              user.UpdatedAt,
-	}, nil
+	summary := toUserSummary(*user, s.EffectivePermissions(user))
+	return &summary, nil
 }
 
 // CreateUser 创建新用户。
@@ -165,23 +161,19 @@ func (s *UserService) CreateUser(input CreateUserInput) (*UserSummary, error) {
 	if input.Email != nil {
 		user.Email = strings.TrimSpace(*input.Email)
 	}
+	if input.NotifyPlatform != nil {
+		user.NotifyPlatform = strings.TrimSpace(*input.NotifyPlatform)
+	}
+	if input.WebhookURL != nil {
+		user.DingtalkWebhookURL = strings.TrimSpace(*input.WebhookURL)
+	}
 
 	if err := s.users.Create(user); err != nil {
 		return nil, err
 	}
 
-	return &UserSummary{
-		ID:                     user.ID,
-		Username:               user.Username,
-		Role:                   user.Role,
-		Permissions:            s.EffectivePermissions(user),
-		Nickname:               user.Nickname,
-		Email:                  user.Email,
-		AvatarURL:              user.AvatarURL,
-		ReceiveAIConversations: user.ReceiveAIConversations,
-		CreatedAt:              user.CreatedAt,
-		UpdatedAt:              user.UpdatedAt,
-	}, nil
+	summary := toUserSummary(*user, s.EffectivePermissions(user))
+	return &summary, nil
 }
 
 // UpdateUser 更新用户信息。
@@ -243,6 +235,14 @@ func (s *UserService) UpdateUser(input UpdateUserInput) (*UserSummary, error) {
 	// 更新 AI 对话接收设置
 	if input.ReceiveAIConversations != nil {
 		updates["receive_ai_conversations"] = *input.ReceiveAIConversations
+	}
+
+	// 更新个人消息通知渠道
+	if input.NotifyPlatform != nil {
+		updates["notify_platform"] = strings.TrimSpace(*input.NotifyPlatform)
+	}
+	if input.WebhookURL != nil {
+		updates["dingtalk_webhook_url"] = strings.TrimSpace(*input.WebhookURL)
 	}
 
 	// 如果没有需要更新的字段，直接返回

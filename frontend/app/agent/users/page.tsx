@@ -95,6 +95,8 @@ export default function UsersPage(props: any = {}) {
     nickname: "",
     email: "",
     receive_ai_conversations: true,
+    notify_platform: "dingtalk",
+    dingtalk_webhook_url: "",
   });
 
   // 修改密码表单
@@ -193,6 +195,8 @@ export default function UsersPage(props: any = {}) {
       nickname: user.nickname || "",
       email: user.email || "",
       receive_ai_conversations: user.receive_ai_conversations,
+      notify_platform: user.notify_platform || "dingtalk",
+      dingtalk_webhook_url: user.dingtalk_webhook_url || "",
     });
     setEditDialogOpen(true);
   };
@@ -660,6 +664,43 @@ export default function UsersPage(props: any = {}) {
                   }
                   placeholder={t("agent.users.placeholder.email")}
                 />
+              </div>
+              {/* 个人消息通知渠道（派单/超时等私聊机器人通知） */}
+              <div className="border-t border-border/70 pt-3">
+                <p className="text-sm font-medium mb-1">
+                  {t("agent.users.notify.channelLabel")}
+                </p>
+                <p className="text-xs text-muted-foreground mb-2">
+                  {t("agent.users.notify.channelHint")}
+                </p>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                  <select
+                    id="edit-notify-platform"
+                    value={editForm.notify_platform || "dingtalk"}
+                    onChange={(e) =>
+                      setEditForm({
+                        ...editForm,
+                        notify_platform: e.target.value,
+                      })
+                    }
+                    className="w-full px-3 py-2 border border-border rounded-md bg-background"
+                  >
+                    <option value="dingtalk">钉钉</option>
+                    <option value="feishu">飞书</option>
+                    <option value="wecom">企业微信</option>
+                  </select>
+                  <Input
+                    id="edit-notify-webhook"
+                    value={editForm.dingtalk_webhook_url || ""}
+                    onChange={(e) =>
+                      setEditForm({
+                        ...editForm,
+                        dingtalk_webhook_url: e.target.value,
+                      })
+                    }
+                    placeholder={t("agent.users.notify.webhookPlaceholder")}
+                  />
+                </div>
               </div>
               <div className="flex items-center gap-2">
                 <input

@@ -35,6 +35,7 @@ import {
   type EmailNotificationConfig,
 } from "@/features/agent/services/emailNotificationApi";
 import { useProfile } from "@/features/agent/hooks/useProfile";
+import { NotificationChannelsCard } from "@/components/agent/settings/NotificationChannelsCard";
 import { apiUrl } from "@/lib/config";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
@@ -803,6 +804,9 @@ export default function SettingsPage(props: any = {}) {
               )}
             </CardContent>
           </Card>
+
+          {/* 消息通知渠道（钉钉/飞书/企微群机器人） */}
+          <NotificationChannelsCard isAdmin={isAdmin} />
 
           {/* 知识库向量模型（平台级，仅管理员可修改；保存后立即生效） */}
           <Card>

@@ -406,6 +406,9 @@ export type I18nKey =
   | "agent.users.placeholder.password"
   | "agent.users.placeholder.username"
   | "agent.users.receiveAiLabel"
+  | "agent.users.notify.channelLabel"
+  | "agent.users.notify.channelHint"
+  | "agent.users.notify.webhookPlaceholder"
   | "agent.users.role.admin"
   | "agent.users.role.agent"
   | "agent.users.search.placeholder"
@@ -1015,6 +1018,9 @@ export const DICT: Record<Lang, Record<I18nKey, string>> = {
     "agent.users.placeholder.password": "请输入密码",
     "agent.users.placeholder.username": "请输入用户名",
     "agent.users.receiveAiLabel": "接收 AI 对话",
+    "agent.users.notify.channelLabel": "消息通知（个人）",
+    "agent.users.notify.channelHint": "选择平台并填写个人机器人 Webhook，新任务/转交/超时将私聊通知该客服",
+    "agent.users.notify.webhookPlaceholder": "个人机器人 Webhook URL",
     "agent.users.role.admin": "管理员",
     "agent.users.role.agent": "客服",
     "agent.users.search.placeholder": "搜索用户（用户名、昵称、邮箱）...",
@@ -1634,6 +1640,9 @@ export const DICT: Record<Lang, Record<I18nKey, string>> = {
     "agent.users.placeholder.password": "Password",
     "agent.users.placeholder.username": "Username",
     "agent.users.receiveAiLabel": "Receive AI conversations",
+    "agent.users.notify.channelLabel": "Notifications (personal)",
+    "agent.users.notify.channelHint": "Pick platform & personal bot Webhook; new tasks/reassigns/timeouts notify this agent privately",
+    "agent.users.notify.webhookPlaceholder": "Personal bot Webhook URL",
     "agent.users.role.admin": "Admin",
     "agent.users.role.agent": "Agent",
     "agent.users.search.placeholder": "Search by username, nickname, email…",

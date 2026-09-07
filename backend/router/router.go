@@ -16,6 +16,7 @@ type ControllerSet struct {
 	AIConfig          *controller.AIConfigController
 	EmbeddingConfig   *controller.EmbeddingConfigController
 	EmailNotification *controller.EmailNotificationConfigController
+	NotificationChannel *controller.NotificationChannelController
 	PromptConfig      *controller.PromptConfigController
 	FAQ               *controller.FAQController
 	Document          *controller.DocumentController
@@ -102,6 +103,12 @@ func RegisterRoutes(r *gin.Engine, controllers ControllerSet, wsHandler gin.Hand
 		group.PUT("/agent/email-notification-config", controllers.EmailNotification.Update)
 		group.DELETE("/agent/email-notification-config", controllers.EmailNotification.Reset)
 		group.POST("/agent/email-notification-config/test", controllers.EmailNotification.SendTest)
+
+		// Message Notification Channels（钉钉/飞书/企微群机器人）
+		group.GET("/agent/notification-channels", controllers.NotificationChannel.Get)
+		group.PUT("/agent/notification-channels", controllers.NotificationChannel.Upsert)
+		group.DELETE("/agent/notification-channels/:id", controllers.NotificationChannel.Delete)
+		group.POST("/agent/notification-channels/test", controllers.NotificationChannel.Test)
 
 		// Prompt Config
 		group.GET("/agent/prompts", controllers.PromptConfig.Get)

@@ -2,6 +2,7 @@ package service
 
 import (
 	"errors"
+	"log"
 	"strings"
 	"time"
 
@@ -20,6 +21,12 @@ type ConversationService struct {
 	userRepo      *repository.UserRepository     // 用于查询用户设置
 	systemLogSvc  *SystemLogService              // 可选，结构化日志
 	appSettings   *repository.AppSettingRepository // 平台级会话维护等配置
+	dispatch      *DispatchService               // 可选，访客选人工时触发派单（后注入）
+}
+
+// SetDispatchService 注入派单服务（main.go 中 dispatchService 创建后调用）。
+func (s *ConversationService) SetDispatchService(d *DispatchService) {
+	s.dispatch = d
 }
 
 // CloseConversation 客服主动关闭会话（visitor/internal 通用）。
@@ -318,6 +325,15 @@ func (s *ConversationService) InitConversation(input InitConversationInput) (*In
 			if err := s.messages.Create(referrerMsg); err != nil {
 				return nil, err
 			}
+		}
+	}
+
+	// 访客显式选择「人工客服」（新建 human 会话 或 从 AI 切到 human）→ 触发客服派单
+	// 避免只切 chat_mode 而无人知晓、访客干等。
+	// 仅当尚未派过单（assigned_agent_id IS NULL）时触发，防访客刷新页面重复派单打扰客服。
+	if conv.ChatMode == "human" && conv.ConversationType == "visitor" && input.ChatMode == "human" && conv.AssignedAgentID == nil && s.dispatch != nil {
+		if err := s.dispatch.DispatchToAgent(conv.ID); err != nil {
+			log.Printf("[conversation] 对话 %d 派单失败: %v", conv.ID, err)
 		}
 	}
 
